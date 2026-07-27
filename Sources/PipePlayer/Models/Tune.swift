@@ -1,0 +1,78 @@
+import Foundation
+
+/// The nine notes of the Great Highland Bagpipe chanter scale, with their
+/// conventional MIDI note numbers (G4=67 through A5=81, matching the fixed
+/// chanter scale of G A B C# D E F# G A used by piping notation software).
+enum Pitch: Int, CaseIterable, Codable, Equatable {
+    case lowG = 67
+    case lowA = 69
+    case b = 71
+    case c = 73
+    case d = 74
+    case e = 76
+    case f = 78
+    case highG = 79
+    case highA = 81
+
+    /// Scale-step index, low G = 0 ... high A = 8. Used by the embellishment
+    /// expander to reason about "the note above/below" independent of the
+    /// underlying (non-uniform) semitone spacing.
+    var scaleIndex: Int {
+        Pitch.allCases.firstIndex(of: self) ?? 0
+    }
+
+    static func at(scaleIndex index: Int) -> Pitch {
+        let clamped = max(0, min(Pitch.allCases.count - 1, index))
+        return Pitch.allCases[clamped]
+    }
+}
+
+/// A single ornament attached to a melody note, stored as its raw (lowercased)
+/// BWW/BMW token — e.g. "thrd", "brl", "tar", "dbb", "gg". `EmbellishmentExpander`
+/// resolves the token to its exact grace-note pitch sequence via
+/// `BWWEmbellishmentTable` (transcribed directly from a real BWW-compatible
+/// app's source, not approximated), falling back to a single conservative
+/// grace note for any token the table doesn't recognize.
+enum Embellishment: Equatable, Codable {
+    case token(String)
+}
+
+/// A single melodic event: a chanter pitch held for a duration, optionally
+/// decorated with an embellishment and/or tied to the following note.
+struct NoteEvent: Equatable, Codable {
+    var pitch: Pitch
+    /// Duration in quarter-note beats (quarter = 1.0, eighth = 0.5, ...).
+    var duration: Double
+    var embellishment: Embellishment?
+    var isDotted: Bool = false
+    var isTiedToNext: Bool = false
+    /// True for a full bar of rest (BWW rests / ABC "z").
+    var isRest: Bool = false
+}
+
+struct Measure: Equatable, Codable {
+    var notes: [NoteEvent]
+    /// 1-indexed ending numbers this measure belongs to (e.g. [1] for a
+    /// first-ending measure, [2] for a second-ending measure). Empty for a
+    /// measure that isn't part of any ending — played on every repeat pass.
+    var endingNumbers: [Int] = []
+}
+
+/// One repeated section of the tune (e.g. part A, part B). `MIDIEventBuilder`
+/// unrolls play order from `hasRepeat` plus each measure's `endingNumbers`.
+struct TunePart: Equatable, Codable {
+    var measures: [Measure]
+    var hasRepeat: Bool = false
+}
+
+struct Tune: Equatable, Codable {
+    var title: String
+    var composer: String?
+    /// Beats per minute for a quarter note.
+    var tempo: Double
+    /// e.g. "2/4", "6/8", "4/4".
+    var timeSignature: String
+    var parts: [TunePart]
+
+    static let empty = Tune(title: "Untitled", composer: nil, tempo: 90, timeSignature: "2/4", parts: [])
+}
