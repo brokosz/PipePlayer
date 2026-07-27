@@ -40,8 +40,9 @@ final class AppState: ObservableObject {
     func open(url: URL) {
         do {
             let loadedVoices = try TuneFileLoader.loadVoices(from: url)
-            voices = loadedVoices
-            engine.load(voices: loadedVoices)
+            let alignedVoices = VoiceAligner.align(loadedVoices)
+            voices = alignedVoices
+            engine.load(voices: alignedVoices)
             addRecent(url)
         } catch {
             errorMessage = error.localizedDescription
