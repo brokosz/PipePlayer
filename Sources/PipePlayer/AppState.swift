@@ -8,9 +8,15 @@ import UniformTypeIdentifiers
 /// they need a reference to the same state rather than view-local `@State`).
 @MainActor
 final class AppState: ObservableObject {
-    @Published var tune: Tune?
+    @Published private(set) var voices: [Voice] = []
     @Published var errorMessage: String?
     @Published private(set) var recentURLs: [URL] = []
+
+    /// The primary voice's tune — drives the window title and progress bar.
+    /// For a multi-voice MusicXML harmony arrangement this is the first
+    /// `<part>` (conventionally the melody); every voice still contributes
+    /// audio via `engine`, independent of what's shown here.
+    var tune: Tune? { voices.first?.tune }
 
     let engine = PlaybackEngine()
 
@@ -33,9 +39,9 @@ final class AppState: ObservableObject {
 
     func open(url: URL) {
         do {
-            let loaded = try TuneFileLoader.load(from: url)
-            tune = loaded
-            engine.load(loaded)
+            let loadedVoices = try TuneFileLoader.loadVoices(from: url)
+            voices = loadedVoices
+            engine.load(voices: loadedVoices)
             addRecent(url)
         } catch {
             errorMessage = error.localizedDescription
@@ -44,7 +50,7 @@ final class AppState: ObservableObject {
 
     func closeTune() {
         engine.stop()
-        tune = nil
+        voices = []
     }
 
     // MARK: - Recents

@@ -1,13 +1,18 @@
 # PipePlayer
 
 A simple macOS app for playing back Great Highland Bagpipe tune files —
-`.abc`, `.bww`, and `.bmw` — with standard transport controls and a choice of
-sound sources.
+`.abc`, `.bww`, `.bmw`, `.musicxml`/`.xml`, and `.mxl` — with standard
+transport controls and a choice of sound sources.
 
 ## Features
 
-- Parses ABC notation and the BWW/BMW "tune code" text format shared by
-  Bagpipe Music Writer, Bagpipe Musicworks Gold, and Bagpipe Reader
+- Parses ABC notation, the BWW/BMW "tune code" text format shared by
+  Bagpipe Music Writer, Bagpipe Musicworks Gold, and Bagpipe Reader, and
+  MusicXML (plain `.musicxml`/`.xml` or compressed `.mxl`)
+- MusicXML files with multiple `<part>`s (a harmony arrangement — melody plus
+  harmony voices meant to sound together) play all of them back
+  simultaneously, with one mute checkbox per voice so you can solo or drop
+  any of them
 - Full grace-note/embellishment expansion (doublings, throws, grips,
   taorluath, birl, strikes, crunluath, and the wider piobaireachd vocabulary)
   using ground-truth grace-note sequences, not approximated ones
@@ -77,6 +82,19 @@ paths, stored via `UserDefaults`) so File → Open Recent works across launches.
 - Tempo is read as a flat quarter-note BPM value regardless of time
   signature (including cut time / 2÷2) — this was cross-checked against a
   real reference parser rather than assumed.
+- MusicXML support reads every `<part>` as its own simultaneous voice (see
+  above), each independently mutable. `<chord>`-tagged notes (extra pitches
+  stacked on a single note within one part) are still skipped — that's a
+  different mechanism from multiple parts and isn't something this app plays
+  back. Grace notes are read as literal pitches, same as ABC; MusicXML has no
+  equivalent of BWW's named ornament tokens. `.mxl` archives are unpacked via
+  the system `unzip` tool rather than a bundled ZIP library. Each voice's
+  progress (repeats, section boundaries) is tracked independently from its
+  own barline markup, so if a source file's voices aren't perfectly
+  consistent about where sections start and end, voices can drift apart by a
+  second or two over a long tune rather than staying sample-locked — a real
+  but minor limitation, not something this app tries to force into sync by
+  overriding one voice's timing with another's.
 
 ## Credits
 

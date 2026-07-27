@@ -59,6 +59,11 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     /// Kontakt, etc.) receives notes instead of the built-in sampler.
     @Published private(set) var hostedComponent: AVAudioUnitComponent?
     @Published private(set) var isLoadingAudioUnit = false
+    /// All simultaneous voices in the currently-loaded tune (just one,
+    /// "Melody", for ABC/BWW/BMW; possibly several for a MusicXML harmony
+    /// arrangement). Exposed so the UI can offer one mute checkbox per voice.
+    @Published private(set) var voices: [Voice] = []
+    @Published private(set) var mutedVoiceIDs: Set<String> = []
 
     private let engine = AVAudioEngine()
     private let sampler = AVAudioUnitSampler()
@@ -66,7 +71,6 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     private let midiOutput = MIDIOutputManager()
     private let scheduler = PlaybackScheduler()
 
-    private var tune: Tune = .empty
     private var events: [ScheduledMIDIEvent] = []
     private var uiTickTimer: Timer?
     private var playbackAnchorWallClock: Date?
@@ -204,21 +208,37 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func load(_ newTune: Tune) {
+    func load(voices newVoices: [Voice]) {
         stop()
-        tune = newTune
-        tempo = newTune.tempo
+        voices = newVoices
+        mutedVoiceIDs = []
+        tempo = newVoices.first?.tune.tempo ?? 90
         rebuildEvents(preservingPosition: false)
     }
 
+    /// Mutes/unmutes one voice (e.g. a harmony part) and rebuilds the merged
+    /// playback timeline. Muting is audio-only — it never changes `duration`,
+    /// which always reflects the longest voice regardless of mute state, so
+    /// the scrubber doesn't jump around as the user toggles checkboxes.
+    func setVoiceMuted(id: String, muted: Bool) {
+        if muted { mutedVoiceIDs.insert(id) } else { mutedVoiceIDs.remove(id) }
+        rebuildEvents(preservingPosition: true)
+    }
+
     private func rebuildEvents(preservingPosition: Bool) {
-        events = MIDIEventBuilder.buildEvents(for: tune, tempoOverride: tempo)
-        duration = MIDIEventBuilder.totalDuration(of: events)
+        let perVoiceEvents = voices.map { voice in
+            (id: voice.id, events: MIDIEventBuilder.buildEvents(for: voice.tune, tempoOverride: tempo))
+        }
+        duration = perVoiceEvents.map { MIDIEventBuilder.totalDuration(of: $0.events) }.max() ?? 0
+        events = perVoiceEvents
+            .filter { !mutedVoiceIDs.contains($0.id) }
+            .flatMap(\.events)
+            .sorted { $0.time < $1.time }
         if !preservingPosition {
             currentTime = 0
         } else if state == .playing {
-            // Tempo changed mid-playback — restart the scheduler at the same
-            // musical position under the new event timing.
+            // Tempo/mute changed mid-playback — restart the scheduler at the
+            // same musical position under the new event timing.
             startScheduler(from: currentTime)
         }
     }
@@ -275,17 +295,42 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         hostedInstrument ?? sampler
     }
 
+    // Reference-counts how many currently-sounding voices hold each pitch.
+    // With multiple simultaneous voices (a MusicXML harmony arrangement)
+    // sharing the same 9-note chanter scale, two voices landing on the same
+    // pitch at once is common (e.g. parallel thirds/unisons) — without this,
+    // one voice's note-off would silence a pitch the other voice is still
+    // holding. Guarded by a lock since note-on/off normally run serially on
+    // `PlaybackScheduler`'s dedicated thread, but `silenceAllNotes()` can also
+    // be called from the main thread (stop/pause/seek).
+    private let noteCountLock = NSLock()
+    private var activeNoteCounts: [UInt8: Int] = [:]
+
     private func handleNoteOn(_ note: UInt8, _ velocity: UInt8) {
+        noteCountLock.lock()
+        let previousCount = activeNoteCounts[note, default: 0]
+        activeNoteCounts[note] = previousCount + 1
+        noteCountLock.unlock()
+        guard previousCount == 0 else { return }
         activeInstrument.startNote(note, withVelocity: velocity, onChannel: 0)
         if isMIDIOutputEnabled { midiOutput.sendNoteOn(note: note, velocity: velocity) }
     }
 
     private func handleNoteOff(_ note: UInt8) {
+        noteCountLock.lock()
+        let previousCount = activeNoteCounts[note, default: 0]
+        let newCount = max(0, previousCount - 1)
+        activeNoteCounts[note] = newCount
+        noteCountLock.unlock()
+        guard previousCount > 0, newCount == 0 else { return }
         activeInstrument.stopNote(note, onChannel: 0)
         if isMIDIOutputEnabled { midiOutput.sendNoteOff(note: note) }
     }
 
     private func silenceAllNotes() {
+        noteCountLock.lock()
+        activeNoteCounts.removeAll()
+        noteCountLock.unlock()
         let instrument = activeInstrument
         for n: UInt8 in 0...127 { instrument.stopNote(n, onChannel: 0) }
         midiOutput.sendAllNotesOff()

@@ -25,6 +25,15 @@ enum Pitch: Int, CaseIterable, Codable, Equatable {
         let clamped = max(0, min(Pitch.allCases.count - 1, index))
         return Pitch.allCases[clamped]
     }
+
+    /// Maps an arbitrary MIDI note number (as computed from MusicXML's
+    /// step/octave/alter) onto the nearest of the 9 fixed chanter pitches.
+    /// A MusicXML file authored for bagpipe music should already sit at or
+    /// very near these exact values — this just absorbs octave/enharmonic
+    /// mismatches rather than failing outright on anything slightly off.
+    static func nearest(toMIDINumber midi: Int) -> Pitch {
+        allCases.min(by: { abs($0.rawValue - midi) < abs($1.rawValue - midi) }) ?? .lowA
+    }
 }
 
 /// A single ornament attached to a melody note, stored as its raw (lowercased)
@@ -75,4 +84,16 @@ struct Tune: Equatable, Codable {
     var parts: [TunePart]
 
     static let empty = Tune(title: "Untitled", composer: nil, tempo: 90, timeSignature: "2/4", parts: [])
+}
+
+/// One simultaneous melodic line. ABC and BWW/BMW are inherently monophonic
+/// and always produce exactly one voice ("Melody"). A MusicXML file can carry
+/// several `<part>` elements representing a real harmony arrangement — e.g.
+/// "melody"/"harm1"/"harm2" bridged staves meant to sound together, not
+/// sequential tune sections — and each becomes its own `Voice` here, mutable
+/// independently in the UI.
+struct Voice: Identifiable, Equatable, Codable {
+    var id: String
+    var name: String
+    var tune: Tune
 }

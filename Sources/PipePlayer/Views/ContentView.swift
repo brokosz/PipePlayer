@@ -17,6 +17,9 @@ struct ContentView: View {
             Divider()
             if let tune = appState.tune {
                 PartProgressView(tune: tune, currentTime: engine.currentTime, tempo: engine.tempo)
+                if engine.voices.count > 1 {
+                    VoiceMuteControlsView(engine: engine)
+                }
                 TransportControlsView(engine: engine)
             } else {
                 emptyState
@@ -60,7 +63,7 @@ struct ContentView: View {
             Image(systemName: "music.note")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
-            Text("Open or drop an .abc, .bww, or .bmw file to play it.")
+            Text("Open or drop an .abc, .bww, .bmw, .musicxml, or .mxl file to play it.")
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
