@@ -31,6 +31,12 @@ struct ContentView: View {
         .onDrop(of: [.fileURL], isTargeted: $isTargetedForDrop) { providers in
             handleDrop(providers)
         }
+        .onDisappear {
+            // Closing the window (the red button) tears down this view
+            // without quitting the app — playback should stop right along
+            // with it rather than keep running with no window to control it.
+            engine.stop()
+        }
         .alert(
             "Couldn't open file",
             isPresented: Binding(
