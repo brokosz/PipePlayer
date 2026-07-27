@@ -18,6 +18,10 @@ mkdir -p "${DIST_APP}/Contents/Resources"
 
 cp ".build/release/${APP_NAME}" "${DIST_APP}/Contents/MacOS/${APP_NAME}"
 
+if [ -f "Resources/AppIcon.icns" ]; then
+    cp "Resources/AppIcon.icns" "${DIST_APP}/Contents/Resources/AppIcon.icns"
+fi
+
 cat > "${DIST_APP}/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -39,6 +43,8 @@ cat > "${DIST_APP}/Contents/Info.plist" << PLIST
     <string>APPL</string>
     <key>CFBundleSignature</key>
     <string>????</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
@@ -50,6 +56,12 @@ cat > "${DIST_APP}/Contents/Info.plist" << PLIST
 </dict>
 </plist>
 PLIST
+
+# Downloaded resources (e.g. an icon dragged in from Downloads) can carry
+# FinderInfo/resource-fork xattrs that make codesign refuse to sign — strip
+# them from the assembled bundle before signing rather than assuming the
+# source file in Resources/ is always already clean.
+xattr -cr "${DIST_APP}"
 
 # Ad-hoc sign so Gatekeeper doesn't flag a locally-built, unsigned app.
 codesign --force --deep --sign - "${DIST_APP}"
