@@ -7,6 +7,14 @@ struct PipePlayerApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(appState: appState)
+                .onOpenURL { url in
+                    // Finder's "Open With"/double-click and the custom
+                    // document-type registrations in package_app.sh's
+                    // Info.plist deliver the file here — without this,
+                    // Launch Services still launches/activates the app and
+                    // opens a window, but nothing ever reads the file.
+                    appState.open(url: url)
+                }
         }
         .windowResizability(.contentSize)
         .commands {

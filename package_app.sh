@@ -53,6 +53,96 @@ cat > "${DIST_APP}/Contents/Info.plist" << PLIST
     <string>NSApplication</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.music</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Bagpipe Tune File</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.brokosz.pipeplayer.bww</string>
+                <string>com.brokosz.pipeplayer.bmw</string>
+                <string>com.brokosz.pipeplayer.abc</string>
+                <string>com.brokosz.pipeplayer.musicxml</string>
+                <string>com.brokosz.pipeplayer.mxl</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.brokosz.pipeplayer.bww</string>
+            <key>UTTypeDescription</key>
+            <string>Bagpipe Music Writer Tune</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.plain-text</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>bww</string></array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.brokosz.pipeplayer.bmw</string>
+            <key>UTTypeDescription</key>
+            <string>Bagpipe Musicworks Tune</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.plain-text</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>bmw</string></array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.brokosz.pipeplayer.abc</string>
+            <key>UTTypeDescription</key>
+            <string>ABC Notation Tune</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.plain-text</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>abc</string></array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.brokosz.pipeplayer.musicxml</string>
+            <key>UTTypeDescription</key>
+            <string>MusicXML Tune</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.xml</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>musicxml</string>
+                    <string>xml</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.brokosz.pipeplayer.mxl</string>
+            <key>UTTypeDescription</key>
+            <string>Compressed MusicXML Tune</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>mxl</string></array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST

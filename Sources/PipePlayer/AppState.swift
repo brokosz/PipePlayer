@@ -12,19 +12,35 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var recentURLs: [URL] = []
 
-    /// The primary voice's tune — drives the window title and progress bar.
-    /// For a multi-voice MusicXML harmony arrangement this is the first
-    /// `<part>` (conventionally the melody); every voice still contributes
-    /// audio via `engine`, independent of what's shown here.
+    /// The primary voice's tune — drives the window title. For a multi-voice
+    /// MusicXML harmony arrangement this is the first `<part>` (conventionally
+    /// the melody); every voice still contributes audio via `engine`,
+    /// independent of what's shown here.
     var tune: Tune? { voices.first?.tune }
 
+    /// The primary voice's tune with embellishments already expanded —
+    /// what `PartProgressView` measures its part spans against. Grace notes
+    /// add a small sliver of real playback time rather than borrowing it from
+    /// the note they decorate (see `EmbellishmentExpander`), so a progress
+    /// bar computed from *un*-expanded note durations would fall increasingly
+    /// behind the real audio, finishing each part before it's actually done.
+    /// `MIDIEventBuilder` expands internally too — this is computed once
+    /// here (not per SwiftUI body re-render) so both sides agree on the same
+    /// timeline without re-running the expansion dozens of times a second.
+    @Published private(set) var progressTune: Tune?
+
     let engine = PlaybackEngine()
+    // Retained here so its Combine subscriptions (which keep the media-key
+    // now-playing info in sync with playback) stay alive for the app's
+    // lifetime — see NowPlayingController.
+    private var nowPlayingController: NowPlayingController?
 
     private let recentsDefaultsKey = "PipePlayer.recentFileURLs"
     private let maxRecents = 10
 
     init() {
         loadRecents()
+        nowPlayingController = NowPlayingController(engine: engine)
     }
 
     func presentOpenPanel() {
@@ -42,6 +58,7 @@ final class AppState: ObservableObject {
             let loadedVoices = try TuneFileLoader.loadVoices(from: url)
             let alignedVoices = VoiceAligner.align(loadedVoices)
             voices = alignedVoices
+            progressTune = alignedVoices.first.map { EmbellishmentExpander.expand(tune: $0.tune) }
             engine.load(voices: alignedVoices)
             addRecent(url)
         } catch {
@@ -52,6 +69,7 @@ final class AppState: ObservableObject {
     func closeTune() {
         engine.stop()
         voices = []
+        progressTune = nil
     }
 
     // MARK: - Recents

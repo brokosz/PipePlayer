@@ -79,10 +79,16 @@ paths, stored via `UserDefaults`) so File → Open Recent works across launches.
   tokens fall back to a single conservative grace note rather than a fully
   authoritative figure — the tune still loads and plays, just with a less
   precise ornament in that one spot.
-- Tempo is read as a flat quarter-note BPM value for every meter except cut
-  time (alla breve, "C_"), where `TuneTempo` is conventionally the half-note
-  pulse and gets doubled — confirmed directly against a real cut-time reel,
-  which otherwise dragged at half its intended speed.
+- `TuneTempo` is read at the meter's own natural tempo-marking beat unit, same
+  as standard notation everywhere: quarter note for simple time (2/4, 3/4,
+  4/4 — read flat, unscaled), half note for cut time (2/2, ×2), and the
+  dotted quarter for compound time (6/8, 9/8, 12/8, ×1.5) — confirmed
+  directly against a real cut-time reel and a real jig, both of which
+  otherwise dragged well under their intended speed. The tempo field in the
+  transport controls always shows the number as written in the file (e.g.
+  132 for a jig), even though actual playback runs at the scaled-up
+  equivalent (198) — only BWW/BMW needs this; MusicXML's `<sound tempo>` is
+  always flat quarter-note bpm by spec regardless of written meter.
 - ABC and BWW/BMW are single-voice only — the grammar itself has no notion of
   multiple simultaneous parts, so every file loads as one "Melody" voice.
   Multi-voice simultaneous playback (see below) is a MusicXML-only feature.

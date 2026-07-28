@@ -49,7 +49,7 @@ enum EmbellishmentExpander {
         result.parts = tune.parts.map { part in
             var newPart = part
             newPart.measures = part.measures.map { measure in
-                Measure(notes: measure.notes.flatMap { expand($0) })
+                Measure(notes: measure.notes.flatMap { expand($0) }, endingNumbers: measure.endingNumbers)
             }
             return newPart
         }

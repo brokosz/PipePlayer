@@ -70,4 +70,20 @@ struct EmbellishmentExpanderTests {
         // grp = lowG, d, lowG grace notes + main B, then the plain D note.
         #expect(notes.map(\.pitch) == [.lowG, .d, .lowG, .b, .d])
     }
+
+    @Test func expandTunePreservesEndingNumbers() {
+        // Regression: an earlier version of expand(tune:) rebuilt each
+        // Measure as `Measure(notes:)`, silently dropping endingNumbers to
+        // its default empty array. Since MIDIEventBuilder reads endings from
+        // this same expanded tune to decide which measures to skip on the
+        // repeat pass, that bug meant 1st/2nd endings were never actually
+        // skipped — both played on every pass, every time.
+        let note = NoteEvent(pitch: .b, duration: 0.5, embellishment: nil)
+        let tune = Tune(
+            title: "T", composer: nil, tempo: 90, timeSignature: "2/4",
+            parts: [TunePart(measures: [Measure(notes: [note], endingNumbers: [1])], hasRepeat: true)]
+        )
+        let expanded = EmbellishmentExpander.expand(tune: tune)
+        #expect(expanded.parts[0].measures[0].endingNumbers == [1])
+    }
 }

@@ -38,7 +38,9 @@ enum TuneFileLoader {
         case "abc":
             return [Voice(id: "melody", name: "Melody", tune: try ABCParser.parse(try loadText(from: url)))]
         case "bww", "bmw":
-            return [Voice(id: "melody", name: "Melody", tune: try BWWParser.parse(try loadText(from: url)))]
+            let tune = try BWWParser.parse(try loadText(from: url))
+            let scaleFactor = BWWParser.tempoScaleFactor(forTimeSignature: tune.timeSignature)
+            return [Voice(id: "melody", name: "Melody", tune: tune, displayTempoScaleFactor: scaleFactor)]
         default:
             throw TuneFileLoaderError.unsupportedExtension(ext.isEmpty ? url.lastPathComponent : ext)
         }

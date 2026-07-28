@@ -21,6 +21,60 @@ struct BWWParserTests {
         #expect(tune.timeSignature == "2/4")
     }
 
+    @Test func explicitTitleTagWinsOverEarlierBareConverterNote() throws {
+        // Real file found in the wild ("Brest St. Marc"): a bare, untagged
+        // credit line ("Converted from BMW Dos file format to Bagpipe
+        // Reader 1.0 format using BMWFC32.") with no ",(T,...)" tuple at all
+        // precedes the real, properly-tagged title line. The older
+        // bare-quote positional fallback (built for files with NO tagged
+        // lines anywhere) was wrongly claiming that converter note as the
+        // title positionally, then refusing to let the real tagged title
+        // overwrite it.
+        let withConverterNote = """
+        Bagpipe Reader:1.0
+
+        "Converted from  BMW Dos file format to Bagpipe Reader 1.0 format using BMWFC32."
+
+        "Brest St. Marc",(T,L,0,0,Times New Roman,16,700,0,0,18,0,0,0)
+
+        "6/8 and 7/8 Jig",(Y,C,0,0,Times New Roman,14,400,0,0,18,0,0,0)
+
+        "",(M,R,0,0,Times New Roman,14,400,0,0,18,0,0,0)
+
+        TuneTempo,90
+        & sharpf sharpc 6_8 I!''
+        ! LA_8 B_8 C_8 !
+        ! D_8 E_8 F_8 ''!I
+        """
+        let tune = try BWWParser.parse(withConverterNote)
+        #expect(tune.title == "Brest St. Marc")
+        #expect(tune.composer == "")
+    }
+
+    @Test func positionalTitleStillWorksWithNoTagsAtAllInFile() throws {
+        // The older plain-positional convention itself (a file with NO
+        // tagged lines anywhere) must keep working — this isn't a case of
+        // "always ignore bare quotes," only "an explicit tag outranks a
+        // positional guess."
+        let untaggedFile = """
+        Bagpipe Reader:1.0
+
+        "Untagged Title"
+
+        "March"
+
+        "A. Composer"
+
+        TuneTempo,90
+        & sharpf sharpc 2_4 I!''
+        ! LA_8 B_8 !
+        ! C_8 D_8 ''!I
+        """
+        let tune = try BWWParser.parse(untaggedFile)
+        #expect(tune.title == "Untagged Title")
+        #expect(tune.composer == "A. Composer")
+    }
+
     @Test func beamSuffixedPitchesAndEmbellishmentsParseCorrectly() throws {
         // "LAr_16"/"LAl_16" carry a print-layout beam-direction suffix (r/l)
         // glued onto the pitch letters with no separator — this used to make
@@ -181,5 +235,59 @@ struct BWWParserTests {
         let tune = try BWWParser.parse(commonTimeTune)
         #expect(tune.timeSignature == "4/4")
         #expect(tune.tempo == 80)
+    }
+
+    @Test func compoundMeterScalesTuneTempoByOnePointFive() throws {
+        // Real jig found in the wild ("Biddy From Sligo"): TuneTempo,132
+        // under "6_8" must play at quarter-note-equivalent 198, not literal
+        // 132 — 6/8 (like 9/8, 12/8) is compound time, conventionally
+        // marked at the dotted-quarter pulse (1.5 quarter notes), the same
+        // general rule that makes cut time ×2, generalized rather than
+        // treated as its own one-off special case.
+        let jigTune = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Jig",(T,L,10,10,Times New Roman,14,0)
+        TuneTempo,132
+        & sharpf sharpc 6_8 I!''
+        ! LA_8 B_8 C_8 !
+        ! D_8 E_8 F_8 ''!I
+        """
+        let tune = try BWWParser.parse(jigTune)
+        #expect(tune.timeSignature == "6/8")
+        #expect(tune.tempo == 198)
+    }
+
+    @Test func simpleTripleMeterLeavesTempoUnscaled() throws {
+        // 3/4 is simple triple (three individual quarter-note beats), not
+        // compound, even though the numerator is a multiple of 3 — must not
+        // be scaled the way 6/8 or 9/8 are.
+        let waltzTune = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Waltz",(T,L,10,10,Times New Roman,14,0)
+        TuneTempo,90
+        & sharpf sharpc 3_4 I!''
+        ! LA_8 B_8 C_8 !
+        ! D_8 E_8 F_8 ''!I
+        """
+        let tune = try BWWParser.parse(waltzTune)
+        #expect(tune.timeSignature == "3/4")
+        #expect(tune.tempo == 90)
+    }
+
+    @Test func nineEightSlipJigScalesTuneTempoByOnePointFive() throws {
+        let slipJigTune = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Slip Jig",(T,L,10,10,Times New Roman,14,0)
+        TuneTempo,140
+        & sharpf sharpc 9_8 I!''
+        ! LA_8 B_8 C_8 !
+        ! D_8 E_8 F_8 ''!I
+        """
+        let tune = try BWWParser.parse(slipJigTune)
+        #expect(tune.timeSignature == "9/8")
+        #expect(tune.tempo == 210)
     }
 }

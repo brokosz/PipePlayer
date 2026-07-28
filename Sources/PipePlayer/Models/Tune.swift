@@ -96,4 +96,15 @@ struct Voice: Identifiable, Equatable, Codable {
     var id: String
     var name: String
     var tune: Tune
+    /// `tune.tempo` ÷ this factor is the number a player actually wrote/
+    /// expects to see (e.g. 132 for a jig marked at the dotted-quarter, even
+    /// though `tune.tempo` holds the quarter-note-equivalent 198 actually
+    /// used for playback). BWW/BMW states tempo at the meter's own natural
+    /// beat unit (quarter for simple time, half note for cut time, dotted
+    /// quarter for compound time) and already bakes the scaling into
+    /// `tune.tempo` at parse time — this factor is what undoes it for
+    /// display. MusicXML's `<sound tempo>` is always flat quarter-note bpm
+    /// by spec regardless of written meter, so MusicXML/ABC voices leave
+    /// this at the default 1.0 (no scaling either way).
+    var displayTempoScaleFactor: Double = 1.0
 }

@@ -43,13 +43,23 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     @Published var tempo: Double = 90 {
         didSet { rebuildEvents(preservingPosition: true) }
     }
+    /// `tempo` ÷ this factor is what the UI shows/edits — undoes whatever
+    /// meter-based scaling the source format's parser already baked into
+    /// `tempo` at load time (see `Voice.displayTempoScaleFactor`), so the
+    /// tempo field shows the number a player actually wrote/expects (e.g.
+    /// 132 for a jig) while `tempo` itself keeps driving playback at the
+    /// real speed (e.g. 198).
+    private var displayTempoScaleFactor = 1.0
     @Published var volume: Float = 0.8 {
         didSet { sampler.volume = volume }
     }
     @Published var isLooping = false
     @Published var isMIDIOutputEnabled = false
     @Published var instrumentProgram = GeneralMIDI.defaultProgram {
-        didSet { loadInstrument(program: instrumentProgram) }
+        didSet {
+            loadInstrument(program: instrumentProgram)
+            UserDefaults.standard.set(instrumentProgram, forKey: Self.instrumentProgramDefaultsKey)
+        }
     }
     /// When set, this file is used instead of the system DLS bank — lets the
     /// user pick their own .sf2/.dls soundfont (e.g. a dedicated bagpipe
@@ -85,15 +95,39 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
 
     var isMIDIOutputAvailable: Bool { midiOutput.isAvailable }
 
+    // Persisted immediately on every change (not just at close/quit) — the
+    // same pattern AppState already uses for the recent-files list, and more
+    // robust than only saving at specific lifecycle moments (survives a
+    // crash or force-quit too).
+    private static let instrumentProgramDefaultsKey = "PipePlayer.instrumentProgram"
+    private static let customSoundFontDefaultsKey = "PipePlayer.customSoundFontPath"
+
     init() {
         engine.attach(sampler)
         engine.connect(sampler, to: engine.mainMixerNode, format: nil)
         sampler.volume = volume
-        loadInstrument(program: instrumentProgram)
+        restorePersistedInstrumentSelection()
         do {
             try engine.start()
         } catch {
             print("PipePlayer: audio engine failed to start (\(error)). Local audio will be silent; MIDI-out still works.")
+        }
+    }
+
+    /// Restores the last-used instrument/SoundFont across launches. AU
+    /// hosting isn't restored here — a hosted plugin is identified by
+    /// re-enumerating installed components, which is a different, more
+    /// fragile problem than remembering a GM program number or a file path.
+    private func restorePersistedInstrumentSelection() {
+        let defaults = UserDefaults.standard
+        if let path = defaults.string(forKey: Self.customSoundFontDefaultsKey),
+           FileManager.default.fileExists(atPath: path) {
+            customSoundFontURL = URL(fileURLWithPath: path)
+        }
+        if let savedProgram = defaults.object(forKey: Self.instrumentProgramDefaultsKey) as? Int {
+            instrumentProgram = savedProgram // didSet -> loadInstrument(program:), using customSoundFontURL above if set
+        } else {
+            loadInstrument(program: instrumentProgram) // no saved program — still need one initial load
         }
     }
 
@@ -106,13 +140,15 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     func useCustomSoundFont(at url: URL) {
         detachHostedInstrument()
         customSoundFontURL = url
-        instrumentProgram = 0 // triggers loadInstrument via didSet
+        UserDefaults.standard.set(url.path, forKey: Self.customSoundFontDefaultsKey)
+        instrumentProgram = 0 // triggers loadInstrument + persists instrumentProgram via didSet
     }
 
     /// Reverts to Apple's built-in General MIDI DLS bank.
     func useBuiltInSoundBank() {
         detachHostedInstrument()
         customSoundFontURL = nil
+        UserDefaults.standard.removeObject(forKey: Self.customSoundFontDefaultsKey)
         loadInstrument(program: instrumentProgram)
     }
 
@@ -212,8 +248,18 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         stop()
         voices = newVoices
         mutedVoiceIDs = []
+        displayTempoScaleFactor = newVoices.first?.displayTempoScaleFactor ?? 1.0
         tempo = newVoices.first?.tune.tempo ?? 90
         rebuildEvents(preservingPosition: false)
+    }
+
+    /// The tempo number the UI shows and edits — e.g. 132 for a jig whose
+    /// actual playback `tempo` is the quarter-note-equivalent 198. For a
+    /// format/meter with no scaling (MusicXML, or BWW/BMW simple time) the
+    /// two are identical.
+    var displayTempo: Double {
+        get { tempo / displayTempoScaleFactor }
+        set { tempo = newValue * displayTempoScaleFactor }
     }
 
     /// Mutes/unmutes one voice (e.g. a harmony part) and rebuilds the merged

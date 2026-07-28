@@ -149,8 +149,8 @@ struct TransportControlsView: View {
 
     private var tempoBinding: Binding<Int> {
         Binding(
-            get: { Int(engine.tempo.rounded()) },
-            set: { engine.tempo = Double(min(248, max(40, $0))) }
+            get: { Int(engine.displayTempo.rounded()) },
+            set: { engine.displayTempo = Double(min(248, max(40, $0))) }
         )
     }
 

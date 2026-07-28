@@ -66,6 +66,8 @@ enum BWWParser {
 
         var title = "Untitled"
         var composer: String?
+        var titleIsFromExplicitTag = false
+        var composerIsFromExplicitTag = false
         var timeSignature = "2/4"
         var explicitTempo: Double?
 
@@ -107,10 +109,28 @@ enum BWWParser {
             case .comment:
                 continue
 
-            case .titledText(let kind, let value):
+            case .titledText(let kind, let value, let isPositional):
                 switch kind {
-                case "T": if title == "Untitled" { title = value }
-                case "M": composer = value
+                case "T":
+                    // An explicit "<title>",(T,...) tag always wins, even
+                    // over an earlier positional guess (a bare, untagged
+                    // credit/converter-note quote — e.g. "Converted from
+                    // BMW Dos file format..." — ahead of the real title in
+                    // a real file). A positional guess only fills in when no
+                    // explicit tag has claimed the title yet.
+                    if !isPositional {
+                        title = value
+                        titleIsFromExplicitTag = true
+                    } else if !titleIsFromExplicitTag && title == "Untitled" {
+                        title = value
+                    }
+                case "M":
+                    if !isPositional {
+                        composer = value
+                        composerIsFromExplicitTag = true
+                    } else if !composerIsFromExplicitTag && composer == nil {
+                        composer = value
+                    }
                 default: break // "Y" tune type, or plain annotation text — not needed for playback
                 }
 
@@ -213,24 +233,39 @@ enum BWWParser {
             parts = [TunePart(measures: [], hasRepeat: false)]
         }
 
-        // Cut time (alla breve, "C_" — timeSignature "2/2") conventionally
-        // states TuneTempo at the half-note pulse, not the quarter note —
-        // confirmed directly against a real reel ("Tripping Up The Stairs"):
-        // TuneTempo,80 under C_ must play at a quarter-note-equivalent 160,
-        // not literal 80, or the tune drags at half its intended speed.
-        // (An earlier version of this parser cross-checked
-        // tomvodi/limepipes-plugin-bww's source instead and found no meter
-        // reinterpretation there, and used that to override this same
-        // direct correction — that was the wrong call: a third-party
-        // parser's source is evidence of what *that code* does, not proof
-        // of how the tune is meant to sound. Direct confirmation against a
-        // real reel wins.) Every other meter uses TuneTempo exactly as
-        // written; the default when no tempo is given at all is the same
-        // flat value for every non-cut-time tune.
+        // TuneTempo states the tempo at the *meter's own natural beat unit*,
+        // same as standard Western notation everywhere else: quarter note
+        // for simple time (2/4, 3/4, 4/4 — unscaled here, since PipePlayer's
+        // internal duration unit already is the quarter-note beat), half
+        // note for cut time (2/2 — confirmed directly against a real reel,
+        // "Tripping Up The Stairs": TuneTempo,80 under C_ must play at a
+        // quarter-note-equivalent 160, not literal 80), and the *dotted*
+        // quarter for compound time (6/8, 9/8, 12/8 — confirmed against a
+        // real jig, "Biddy From Sligo": TuneTempo,132 under 6_8 must play at
+        // a quarter-note-equivalent 198, not literal 132, which dragged
+        // badly). An earlier version of this only special-cased cut time;
+        // generalizing to the actual rule fixes jigs/slip jigs/etc. too
+        // instead of chasing each meter as its own one-off bug report.
         let baseTempo = explicitTempo ?? 90
-        let tempo = timeSignature == "2/2" ? baseTempo * 2 : baseTempo
+        let tempo = baseTempo * Self.tempoScaleFactor(forTimeSignature: timeSignature)
 
         return Tune(title: title, composer: composer, tempo: tempo, timeSignature: timeSignature, parts: parts)
+    }
+
+    /// How many quarter notes long the meter's own natural tempo-marking
+    /// beat unit is. Compound meters (6/8, 9/8, 12/8 — numerator a multiple
+    /// of 3, greater than 3) are marked at the dotted note of the
+    /// denominator's value (3 denominator-units); everything else
+    /// (including 3/4, which is simple triple, not compound) is marked at a
+    /// single denominator-unit.
+    static func tempoScaleFactor(forTimeSignature timeSignature: String) -> Double {
+        let comps = timeSignature.split(separator: "/")
+        guard comps.count == 2, let numerator = Double(comps[0]), let denominator = Double(comps[1]), denominator > 0 else {
+            return 1.0
+        }
+        let denominatorUnitInQuarterNotes = 4.0 / denominator
+        let isCompound = numerator > 3 && numerator.truncatingRemainder(dividingBy: 3) == 0
+        return isCompound ? 3.0 * denominatorUnitInQuarterNotes : denominatorUnitInQuarterNotes
     }
 
     /// A `.bmw` file that doesn't start with a recognizable text header (one
@@ -248,7 +283,9 @@ enum BWWParser {
 
     private enum Token {
         case comment
-        case titledText(kind: String, value: String) // T=title, M=composer, Y=tune type
+        /// `isPositional` is true for the older bare-quote positional
+        /// fallback (no `,(T,...)` tuple at all) — a guess, not a real tag.
+        case titledText(kind: String, value: String, isPositional: Bool) // T=title, M=composer, Y=tune type
         case meterFraction(String)
         case tempo(Double)
         case signature
@@ -330,6 +367,7 @@ enum BWWParser {
                 }
                 j += 1 // consume closing quote
                 var kindChar: String?
+                var isPositional = false
                 if j < chars.count, chars[j] == ",", j + 1 < chars.count, chars[j + 1] == "(" {
                     kindChar = String(chars[j + 2])
                     // Skip to the matching closing paren of the tuple.
@@ -347,14 +385,20 @@ enum BWWParser {
                     // Bare header quote, no tuple, no trailing comma at all —
                     // the older positional style: 1st = title, 2nd = tune
                     // type (ignored downstream), 3rd = composer, rest ignored.
+                    // Real files mix this with properly-tagged lines too — a
+                    // single untagged "Converted from BMW Dos..." converter
+                    // credit note ahead of a real "<Title>",(T,...) line was
+                    // wrongly claiming the title slot positionally; isPositional
+                    // marks this a guess so an explicit tag later always wins.
                     let positionalKind = ["T", "Y", "M"]
                     if bareHeaderQuoteCount < positionalKind.count {
                         kindChar = positionalKind[bareHeaderQuoteCount]
+                        isPositional = true
                     }
                     bareHeaderQuoteCount += 1
                 }
                 if let kind = kindChar {
-                    tokens.append(.titledText(kind: kind, value: quoted))
+                    tokens.append(.titledText(kind: kind, value: quoted, isPositional: isPositional))
                 }
                 i = j
                 continue
