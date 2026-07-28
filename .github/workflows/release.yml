@@ -19,6 +19,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Select Xcode 16.2
+        # The runner's default Xcode (15.4) ships Swift 5.10; Package.swift
+        # requires tools-version 6.0, which needs Xcode 16+. 16.2 is
+        # installed alongside the default on macos-14, just not selected.
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+
       - name: Run tests
         run: swift test
 
