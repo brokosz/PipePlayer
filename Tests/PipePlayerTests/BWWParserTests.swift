@@ -143,4 +143,43 @@ struct BWWParserTests {
         let tune = try BWWParser.parse(withTempo)
         #expect(tune.tempo == 120)
     }
+
+    @Test func cutTimeDoublesTuneTempo() throws {
+        // Real reel found in the wild ("Tripping Up The Stairs"):
+        // TuneTempo,80 under "C_" (cut time / alla breve, timeSignature
+        // "2/2") must play at quarter-note-equivalent 160, not literal 80 —
+        // cut time conventionally states tempo at the half-note pulse.
+        // Confirmed directly by ear against a real cut-time reel; every
+        // other meter uses TuneTempo exactly as written (see the 2/4
+        // `tuneTempoParsesWithoutParens` case above, unaffected by this).
+        let cutTimeTune = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Reel",(T,L,10,10,Times New Roman,14,0)
+        TuneTempo,80
+        C_
+        & sharpf sharpc I!''
+        ! LA_8 B_8 !
+        ! C_8 D_8 ''!I
+        """
+        let tune = try BWWParser.parse(cutTimeTune)
+        #expect(tune.timeSignature == "2/2")
+        #expect(tune.tempo == 160)
+    }
+
+    @Test func nonCutTimeMeterLeavesTempoUnscaled() throws {
+        let commonTimeTune = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test March",(T,L,10,10,Times New Roman,14,0)
+        TuneTempo,80
+        C
+        & sharpf sharpc I!''
+        ! LA_8 B_8 !
+        ! C_8 D_8 ''!I
+        """
+        let tune = try BWWParser.parse(commonTimeTune)
+        #expect(tune.timeSignature == "4/4")
+        #expect(tune.tempo == 80)
+    }
 }

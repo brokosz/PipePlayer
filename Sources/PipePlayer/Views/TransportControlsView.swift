@@ -48,7 +48,7 @@ struct TransportControlsView: View {
                         .frame(width: 44)
                         .multilineTextAlignment(.trailing)
                         .textFieldStyle(.roundedBorder)
-                    Stepper("", value: tempoBinding, in: 40...160)
+                    Stepper("", value: tempoBinding, in: 40...248)
                         .labelsHidden()
                     Text("BPM")
                         .foregroundStyle(.secondary)
@@ -150,7 +150,7 @@ struct TransportControlsView: View {
     private var tempoBinding: Binding<Int> {
         Binding(
             get: { Int(engine.tempo.rounded()) },
-            set: { engine.tempo = Double(min(160, max(40, $0))) }
+            set: { engine.tempo = Double(min(248, max(40, $0))) }
         )
     }
 

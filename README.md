@@ -79,9 +79,13 @@ paths, stored via `UserDefaults`) so File → Open Recent works across launches.
   tokens fall back to a single conservative grace note rather than a fully
   authoritative figure — the tune still loads and plays, just with a less
   precise ornament in that one spot.
-- Tempo is read as a flat quarter-note BPM value regardless of time
-  signature (including cut time / 2÷2) — this was cross-checked against a
-  real reference parser rather than assumed.
+- Tempo is read as a flat quarter-note BPM value for every meter except cut
+  time (alla breve, "C_"), where `TuneTempo` is conventionally the half-note
+  pulse and gets doubled — confirmed directly against a real cut-time reel,
+  which otherwise dragged at half its intended speed.
+- ABC and BWW/BMW are single-voice only — the grammar itself has no notion of
+  multiple simultaneous parts, so every file loads as one "Melody" voice.
+  Multi-voice simultaneous playback (see below) is a MusicXML-only feature.
 - MusicXML support reads every `<part>` as its own simultaneous voice (see
   above), each independently mutable. `<chord>`-tagged notes (extra pitches
   stacked on a single note within one part) are still skipped — that's a

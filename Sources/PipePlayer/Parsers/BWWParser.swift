@@ -213,18 +213,22 @@ enum BWWParser {
             parts = [TunePart(measures: [], hasRepeat: false)]
         }
 
-        // No meter-based tempo reinterpretation: cross-checked against
-        // tomvodi/limepipes-plugin-bww (a real BWW parser), whose tunetempo
-        // test fixture shows TuneTempo passed straight through as a flat
-        // integer with no cut-time doubling/halving anywhere in its
-        // pipeline. An explicit TuneTempo is therefore used exactly as
-        // written, for every meter — that "cut time" tempo scaling this file
-        // briefly had was chasing a problem that doesn't exist at the
-        // parsing level. The default when no tempo is given at all is the
-        // same flat value for every tune regardless of meter; PipePlayer's
-        // own tempo control is the intended way to dial in a livelier feel
-        // for a specific reel, not a guessed-at per-genre default here.
-        let tempo = explicitTempo ?? 90
+        // Cut time (alla breve, "C_" — timeSignature "2/2") conventionally
+        // states TuneTempo at the half-note pulse, not the quarter note —
+        // confirmed directly against a real reel ("Tripping Up The Stairs"):
+        // TuneTempo,80 under C_ must play at a quarter-note-equivalent 160,
+        // not literal 80, or the tune drags at half its intended speed.
+        // (An earlier version of this parser cross-checked
+        // tomvodi/limepipes-plugin-bww's source instead and found no meter
+        // reinterpretation there, and used that to override this same
+        // direct correction — that was the wrong call: a third-party
+        // parser's source is evidence of what *that code* does, not proof
+        // of how the tune is meant to sound. Direct confirmation against a
+        // real reel wins.) Every other meter uses TuneTempo exactly as
+        // written; the default when no tempo is given at all is the same
+        // flat value for every non-cut-time tune.
+        let baseTempo = explicitTempo ?? 90
+        let tempo = timeSignature == "2/2" ? baseTempo * 2 : baseTempo
 
         return Tune(title: title, composer: composer, tempo: tempo, timeSignature: timeSignature, parts: parts)
     }
