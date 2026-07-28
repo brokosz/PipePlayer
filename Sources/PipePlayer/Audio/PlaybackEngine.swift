@@ -159,9 +159,15 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     func useAudioUnit(_ component: AVAudioUnitComponent) {
         isLoadingAudioUnit = true
         let boxedComponent = UncheckedSendableBox(component)
-        AVAudioUnit.instantiate(with: component.audioComponentDescription, options: []) { [weak self] avAudioUnit, error in
+        AVAudioUnit.instantiate(with: component.audioComponentDescription, options: []) { avAudioUnit, error in
             let boxedResult = UncheckedSendableBox((avAudioUnit, error))
-            DispatchQueue.main.async {
+            // [weak self] captured here, at the closure that actually uses
+            // self, rather than on the outer completion handler and
+            // re-captured from there — a newer Swift 6 toolchain (Xcode
+            // 16.2) flags the two-hop version as "sending self risks
+            // causing data races" even though it's provably fine by
+            // construction (see the class-level @unchecked Sendable note).
+            DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.isLoadingAudioUnit = false
                 let (avAudioUnit, error) = boxedResult.value
