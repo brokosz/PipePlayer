@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    # softprops/action-gh-release needs contents:write to create the release
+    # and upload assets. Newer repos default GITHUB_TOKEN to read-only, which
+    # would silently 403 here without this — the repo's own "Workflow
+    # permissions" setting (Settings > Actions > General) is still a ceiling
+    # on this, though, so it needs to allow read-and-write there too.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: swift test
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build app bundle
+        env:
+          PIPEPLAYER_VERSION: ${{ steps.version.outputs.version }}
+        run: ./package_app.sh
+
+      - name: Zip app bundle
+        # ditto (not plain zip) preserves the bundle structure, resource
+        # fork, and code signature correctly — plain zip is known to mangle
+        # .app bundles on macOS.
+        run: |
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent PipePlayer.app "PipePlayer-${{ steps.version.outputs.version }}.zip"
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PipePlayer-${{ steps.version.outputs.version }}.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifact
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PipePlayer-${{ steps.version.outputs.version }}
+          path: dist/PipePlayer-${{ steps.version.outputs.version }}.zip

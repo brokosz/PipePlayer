@@ -7,7 +7,10 @@ cd "$(dirname "$0")"
 
 APP_NAME="PipePlayer"
 BUNDLE_ID="com.brokosz.pipeplayer"
-VERSION="1.0"
+# Overridable so the release workflow can stamp the actual tag version
+# (e.g. PIPEPLAYER_VERSION=1.2.0 ./package_app.sh) instead of a permanently
+# hardcoded default.
+VERSION="${PIPEPLAYER_VERSION:-1.0}"
 
 swift build -c release
 

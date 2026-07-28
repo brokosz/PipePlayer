@@ -56,6 +56,23 @@ This builds a release binary and produces `dist/PipePlayer.app`. Copy it to
 `/Applications` or `~/Applications` and launch normally. Re-run the script
 any time after changing the code to refresh the bundle.
 
+## CI & releases
+
+Every push and PR to `main` runs `swift build` + `swift test` on macOS via
+[GitHub Actions](.github/workflows/ci.yml).
+
+To cut a release: push a tag matching `v*` (e.g. `git tag v1.1.0 && git push
+origin v1.1.0`). [The release workflow](.github/workflows/release.yml) builds
+`PipePlayer.app`, zips it, and publishes it to the repo's Releases page with
+that version baked into the bundle's `CFBundleVersion`. It can also be run
+manually (without a tag) via the Actions tab's "Run workflow" button, which
+uploads the build as a workflow artifact instead of a release.
+
+Released builds are ad-hoc signed, not notarized (no paid Apple Developer
+account behind this project) — Gatekeeper will flag a fresh download the
+first time it's opened. Right-click the app → Open once to get past that;
+subsequent launches are normal.
+
 ## Data & privacy
 
 PipePlayer does not collect, transmit, or store any data anywhere. It only
