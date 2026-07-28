@@ -4,3 +4,8 @@ DerivedData/
 *.xcodeproj
 .DS_Store
 dist/
+
+# Bundled soundfont built from ePipesDrones.app samples -- kept local/out of
+# git (large binary, not something to publish to the repo). package_app.sh
+# and Package.swift's resources both expect it at this path when building.
+Resources/SoundFonts/

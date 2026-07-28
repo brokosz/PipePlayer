@@ -65,6 +65,13 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     /// user pick their own .sf2/.dls soundfont (e.g. a dedicated bagpipe
     /// soundfont) instead of Apple's built-in General MIDI bank.
     @Published private(set) var customSoundFontURL: URL?
+    /// The custom file's own preset names (e.g. "Great Highland Bagpipe",
+    /// "Scottish Smallpipes"), read from its `phdr` chunk — empty for a .dls
+    /// file or anything that isn't a well-formed .sf2. The instrument picker
+    /// shows these instead of the full 128-entry GM list whenever they're
+    /// available, since a dedicated soundfont's own program layout is what
+    /// actually matters to the user, not General MIDI's.
+    @Published private(set) var customSoundFontPresets: [SoundFontPreset] = []
     /// When set, this hosted third-party Audio Unit instrument (MainStage,
     /// Kontakt, etc.) receives notes instead of the built-in sampler.
     @Published private(set) var hostedComponent: AVAudioUnitComponent?
@@ -74,6 +81,22 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     /// arrangement). Exposed so the UI can offer one mute checkbox per voice.
     @Published private(set) var voices: [Voice] = []
     @Published private(set) var mutedVoiceIDs: Set<String> = []
+    /// A continuous drone note (MIDI 36/C1 — reserved by PipeDrones.sf2's
+    /// GHB/Smallpipes presets specifically for this, outside the 67-81
+    /// melody range) sounded for as long as playback runs. Meaningful only
+    /// with a soundfont that maps something to that note; harmless
+    /// (silent or an unrelated low note) otherwise.
+    @Published var isDroneEnabled = false {
+        didSet {
+            guard state == .playing else { return }
+            if isDroneEnabled { startDrone() } else { stopDrone() }
+        }
+    }
+    private static let droneMIDINote: UInt8 = 36
+    // Half of the melody's default velocity — the drone sounds continuously
+    // underneath the whole tune, so it needs to sit back in the mix rather
+    // than match the chanter's own loudness.
+    private static let droneVelocity: UInt8 = MIDIEventBuilder.defaultVelocity / 2
 
     private let engine = AVAudioEngine()
     private let sampler = AVAudioUnitSampler()
@@ -81,7 +104,7 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     private let midiOutput = MIDIOutputManager()
     private let scheduler = PlaybackScheduler()
 
-    private var events: [ScheduledMIDIEvent] = []
+    private(set) var events: [ScheduledMIDIEvent] = []
     private var uiTickTimer: Timer?
     private var playbackAnchorWallClock: Date?
     private var playbackAnchorOffset: TimeInterval = 0
@@ -122,7 +145,9 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         let defaults = UserDefaults.standard
         if let path = defaults.string(forKey: Self.customSoundFontDefaultsKey),
            FileManager.default.fileExists(atPath: path) {
-            customSoundFontURL = URL(fileURLWithPath: path)
+            let url = URL(fileURLWithPath: path)
+            customSoundFontURL = url
+            customSoundFontPresets = SoundFontPresetReader.presets(at: url)
         }
         if let savedProgram = defaults.object(forKey: Self.instrumentProgramDefaultsKey) as? Int {
             instrumentProgram = savedProgram // didSet -> loadInstrument(program:), using customSoundFontURL above if set
@@ -140,14 +165,16 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     func useCustomSoundFont(at url: URL) {
         detachHostedInstrument()
         customSoundFontURL = url
+        customSoundFontPresets = SoundFontPresetReader.presets(at: url)
         UserDefaults.standard.set(url.path, forKey: Self.customSoundFontDefaultsKey)
-        instrumentProgram = 0 // triggers loadInstrument + persists instrumentProgram via didSet
+        instrumentProgram = customSoundFontPresets.first?.program ?? 0 // triggers loadInstrument + persists instrumentProgram via didSet
     }
 
     /// Reverts to Apple's built-in General MIDI DLS bank.
     func useBuiltInSoundBank() {
         detachHostedInstrument()
         customSoundFontURL = nil
+        customSoundFontPresets = []
         UserDefaults.standard.removeObject(forKey: Self.customSoundFontDefaultsKey)
         loadInstrument(program: instrumentProgram)
     }
@@ -277,9 +304,54 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         rebuildEvents(preservingPosition: true)
     }
 
+    // The first voice is the primary/melody line (see Voice's doc comment);
+    // any others are harmony parts that should sit back in the mix rather
+    // than match it note-for-note.
+    static let harmonyVoiceVelocityScale = 0.7
+    // Channels 0...14 are available for voices (one each, primary first);
+    // 15 is reserved for the drone. Keeping every voice on its own channel
+    // means two voices landing on the same pitch at the same time are
+    // independent MIDI events that mix additively — without this, a
+    // harmony voice claiming a shared pitch first would suppress the
+    // melody's own note-on for it (same (pitch) key, "already sounding"),
+    // making the melody inherit the harmony's lower velocity for the
+    // overlap — audible as the melody "ducking" whenever it unisons with a
+    // harmony voice, which happens often on a shared 9-note chanter scale.
+    private static let maxVoiceChannel: UInt8 = 14
+    private static let droneMIDIChannel: UInt8 = 15
+
+    /// Scales every note-on event's velocity by `scale` (note-offs are
+    /// untouched — their velocity field is always 0 already and carries no
+    /// loudness meaning). `scale == 1.0` returns `events` unchanged.
+    static func scaledEvents(_ events: [ScheduledMIDIEvent], velocityScale scale: Double) -> [ScheduledMIDIEvent] {
+        guard scale != 1.0 else { return events }
+        return events.map { event in
+            guard event.kind == .noteOn else { return event }
+            var scaled = event
+            scaled.velocity = UInt8((Double(event.velocity) * scale).rounded())
+            return scaled
+        }
+    }
+
     private func rebuildEvents(preservingPosition: Bool) {
-        let perVoiceEvents = voices.map { voice in
-            (id: voice.id, events: MIDIEventBuilder.buildEvents(for: voice.tune, tempoOverride: tempo))
+        // Deliberately NOT compensating for how many voices are active here
+        // (an earlier version scaled every voice's velocity, melody
+        // included, by 1/sqrt(activeVoiceCount)) — that kept the combined
+        // level from growing with harmony voices, but it also meant the
+        // melody was never actually at full, unscaled volume in a
+        // multi-voice tune (down ~42% with 3 voices, close enough to "half"
+        // to explain a "why is everything quieter now" complaint even with
+        // every volume control maxed). Melody always plays at its own full
+        // velocity; harmonies stay tempered by harmonyVoiceVelocityScale
+        // alone. Real ensembles genuinely do get louder with more parts
+        // playing together — that's expected, not a bug to compensate away.
+        let perVoiceEvents = voices.enumerated().map { index, voice -> (id: String, events: [ScheduledMIDIEvent]) in
+            let rawEvents = MIDIEventBuilder.buildEvents(for: voice.tune, tempoOverride: tempo)
+            let relativeScale = index == 0 ? 1.0 : Self.harmonyVoiceVelocityScale
+            let channel = UInt8(min(index, Int(Self.maxVoiceChannel)))
+            var scaledEvents = Self.scaledEvents(rawEvents, velocityScale: relativeScale)
+            for i in scaledEvents.indices { scaledEvents[i].channel = channel }
+            return (voice.id, scaledEvents)
         }
         duration = perVoiceEvents.map { MIDIEventBuilder.totalDuration(of: $0.events) }.max() ?? 0
         events = perVoiceEvents
@@ -289,8 +361,13 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         if !preservingPosition {
             currentTime = 0
         } else if state == .playing {
-            // Tempo/mute changed mid-playback — restart the scheduler at the
-            // same musical position under the new event timing.
+            // Tempo/mute changed mid-playback — silence first. The new
+            // scheduler walks a fresh timeline from currentTime with no
+            // memory of what was already sounding under the old one, so
+            // without this a note open under the old tempo/mute state could
+            // be orphaned (its matching note-off was on the now-invalidated
+            // old schedule and will never fire).
+            silenceAllNotes()
             startScheduler(from: currentTime)
         }
     }
@@ -302,12 +379,14 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         state = .playing
         startScheduler(from: currentTime)
         startUITicking()
+        if isDroneEnabled { startDrone() }
     }
 
     func pause() {
         scheduler.stop()
         stopUITicking()
         state = .paused
+        if isDroneEnabled { stopDrone() }
         silenceAllNotes()
     }
 
@@ -316,6 +395,7 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         stopUITicking()
         state = .stopped
         currentTime = 0
+        if isDroneEnabled { stopDrone() }
         silenceAllNotes()
     }
 
@@ -326,6 +406,7 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         currentTime = max(0, min(time, duration))
         if wasPlaying {
             startScheduler(from: currentTime)
+            if isDroneEnabled { startDrone() }
         }
     }
 
@@ -335,8 +416,8 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         scheduler.start(
             events: events,
             from: time,
-            onNoteOn: { [weak self] note, velocity in self?.handleNoteOn(note, velocity) },
-            onNoteOff: { [weak self] note in self?.handleNoteOff(note) },
+            onNoteOn: { [weak self] note, velocity, channel in self?.handleNoteOn(note, velocity, channel: channel) },
+            onNoteOff: { [weak self] note, channel in self?.handleNoteOff(note, channel: channel) },
             onFinished: { [weak self] in self?.handleFinished() }
         )
     }
@@ -347,45 +428,61 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         hostedInstrument ?? sampler
     }
 
-    // Reference-counts how many currently-sounding voices hold each pitch.
-    // With multiple simultaneous voices (a MusicXML harmony arrangement)
-    // sharing the same 9-note chanter scale, two voices landing on the same
-    // pitch at once is common (e.g. parallel thirds/unisons) — without this,
-    // one voice's note-off would silence a pitch the other voice is still
-    // holding. Guarded by a lock since note-on/off normally run serially on
-    // `PlaybackScheduler`'s dedicated thread, but `silenceAllNotes()` can also
-    // be called from the main thread (stop/pause/seek).
+    /// Reference-counts how many currently-sounding events hold each
+    /// (channel, pitch) pair. Each voice has its own channel (see
+    /// `rebuildEvents`), so this only ever needs to protect against
+    /// same-voice edge cases (e.g. a defensively-retriggered tie) — cross-
+    /// voice unisons are already independent MIDI events by construction,
+    /// not something this dictionary needs to reconcile.
+    ///
+    /// The lock's scope covers the actual activeInstrument/midiOutput calls
+    /// too, not just the dictionary bookkeeping — note-on/off normally run
+    /// serially on PlaybackScheduler's dedicated thread, but drone toggling,
+    /// stop/pause/seek, and silenceAllNotes() all call in from the main
+    /// thread as well. AVAudioUnitSampler's start/stopNote aren't documented
+    /// as safe to call concurrently from two threads at once; serializing
+    /// every call through one lock (cheap — these are simple parameter-
+    /// setting calls, not raw buffer work) removes that as a source of the
+    /// glitches/dropped notes reported when toggling settings mid-playback.
+    private struct NoteKey: Hashable {
+        let channel: UInt8
+        let note: UInt8
+    }
     private let noteCountLock = NSLock()
-    private var activeNoteCounts: [UInt8: Int] = [:]
+    private var activeNoteCounts: [NoteKey: Int] = [:]
 
-    private func handleNoteOn(_ note: UInt8, _ velocity: UInt8) {
+    private func handleNoteOn(_ note: UInt8, _ velocity: UInt8, channel: UInt8) {
+        let key = NoteKey(channel: channel, note: note)
         noteCountLock.lock()
-        let previousCount = activeNoteCounts[note, default: 0]
-        activeNoteCounts[note] = previousCount + 1
-        noteCountLock.unlock()
+        defer { noteCountLock.unlock() }
+        let previousCount = activeNoteCounts[key, default: 0]
+        activeNoteCounts[key] = previousCount + 1
         guard previousCount == 0 else { return }
-        activeInstrument.startNote(note, withVelocity: velocity, onChannel: 0)
-        if isMIDIOutputEnabled { midiOutput.sendNoteOn(note: note, velocity: velocity) }
+        activeInstrument.startNote(note, withVelocity: velocity, onChannel: channel)
+        if isMIDIOutputEnabled { midiOutput.sendNoteOn(note: note, velocity: velocity, channel: channel) }
     }
 
-    private func handleNoteOff(_ note: UInt8) {
+    private func handleNoteOff(_ note: UInt8, channel: UInt8) {
+        let key = NoteKey(channel: channel, note: note)
         noteCountLock.lock()
-        let previousCount = activeNoteCounts[note, default: 0]
+        defer { noteCountLock.unlock() }
+        let previousCount = activeNoteCounts[key, default: 0]
         let newCount = max(0, previousCount - 1)
-        activeNoteCounts[note] = newCount
-        noteCountLock.unlock()
+        activeNoteCounts[key] = newCount
         guard previousCount > 0, newCount == 0 else { return }
-        activeInstrument.stopNote(note, onChannel: 0)
-        if isMIDIOutputEnabled { midiOutput.sendNoteOff(note: note) }
+        activeInstrument.stopNote(note, onChannel: channel)
+        if isMIDIOutputEnabled { midiOutput.sendNoteOff(note: note, channel: channel) }
     }
 
     private func silenceAllNotes() {
         noteCountLock.lock()
+        defer { noteCountLock.unlock() }
         activeNoteCounts.removeAll()
-        noteCountLock.unlock()
         let instrument = activeInstrument
-        for n: UInt8 in 0...127 { instrument.stopNote(n, onChannel: 0) }
-        midiOutput.sendAllNotesOff()
+        for channel: UInt8 in 0...15 {
+            for n: UInt8 in 0...127 { instrument.stopNote(n, onChannel: channel) }
+            midiOutput.sendAllNotesOff(channel: channel)
+        }
     }
 
     private func handleFinished() {
@@ -393,13 +490,27 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
             guard let self else { return }
             if self.isLooping {
                 self.currentTime = 0
+                // Deliberately not stopping the drone here — play()'s own
+                // startDrone() call becomes a no-op (already-on note,
+                // caught by the reference count in handleNoteOn), so the
+                // drone sustains seamlessly across the loop boundary rather
+                // than re-triggering with an audible blip every repeat.
                 self.play()
             } else {
                 self.stopUITicking()
                 self.state = .stopped
                 self.currentTime = 0
+                if self.isDroneEnabled { self.stopDrone() }
             }
         }
+    }
+
+    private func startDrone() {
+        handleNoteOn(Self.droneMIDINote, Self.droneVelocity, channel: Self.droneMIDIChannel)
+    }
+
+    private func stopDrone() {
+        handleNoteOff(Self.droneMIDINote, channel: Self.droneMIDIChannel)
     }
 
     // MARK: - UI progress ticking (smooth scrubber independent of sparse note events)

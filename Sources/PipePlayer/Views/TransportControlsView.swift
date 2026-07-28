@@ -7,6 +7,8 @@ struct TransportControlsView: View {
     @ObservedObject var engine: PlaybackEngine
     @State private var availableAudioUnits: [AVAudioUnitComponent] = []
     @State private var pluginWindowController: PluginWindowController?
+    @State private var isScrubbing = false
+    @State private var scrubberValue: TimeInterval = 0
 
     var body: some View {
         VStack(spacing: 12) {
@@ -29,6 +31,12 @@ struct TransportControlsView: View {
                 }
                 .toggleStyle(.button)
                 .help("Loop")
+
+                Toggle(isOn: $engine.isDroneEnabled) {
+                    Image(systemName: "waveform")
+                }
+                .toggleStyle(.button)
+                .help("Drone — a continuous bagpipe drone underneath the melody (needs a soundfont with a drone sample, like the bundled PipeDrones.sf2)")
 
                 Spacer()
 
@@ -62,8 +70,14 @@ struct TransportControlsView: View {
             LabeledContent("Instrument") {
                 HStack(spacing: 6) {
                     Picker("", selection: $engine.instrumentProgram) {
-                        ForEach(GeneralMIDI.names.indices, id: \.self) { program in
-                            Text(GeneralMIDI.names[program]).tag(program)
+                        if !engine.customSoundFontPresets.isEmpty {
+                            ForEach(engine.customSoundFontPresets, id: \.program) { preset in
+                                Text(preset.name).tag(preset.program)
+                            }
+                        } else {
+                            ForEach(GeneralMIDI.names.indices, id: \.self) { program in
+                                Text(GeneralMIDI.names[program]).tag(program)
+                            }
                         }
                     }
                     .labelsHidden()
@@ -158,13 +172,22 @@ struct TransportControlsView: View {
         VStack(spacing: 4) {
             Slider(
                 value: Binding(
-                    get: { engine.currentTime },
-                    set: { engine.seek(to: $0) }
+                    get: { isScrubbing ? scrubberValue : engine.currentTime },
+                    set: { scrubberValue = $0 }
                 ),
-                in: 0...max(engine.duration, 0.01)
+                in: 0...max(engine.duration, 0.01),
+                onEditingChanged: { editing in
+                    isScrubbing = editing
+                    // Committing on every intermediate drag value (rather
+                    // than just on release) meant dozens of full stop/
+                    // silence-all-notes/restart cycles per second while
+                    // dragging — real audio-engine churn, not just a UI
+                    // nicety. Only seek once, when the drag actually ends.
+                    if !editing { engine.seek(to: scrubberValue) }
+                }
             )
             HStack {
-                Text(formatted(engine.currentTime))
+                Text(formatted(isScrubbing ? scrubberValue : engine.currentTime))
                 Spacer()
                 Text(formatted(engine.duration))
             }

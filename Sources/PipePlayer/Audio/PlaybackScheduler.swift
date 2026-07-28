@@ -27,8 +27,8 @@ final class PlaybackScheduler: @unchecked Sendable {
     func start(
         events: [ScheduledMIDIEvent],
         from startTime: TimeInterval,
-        onNoteOn: @escaping @Sendable (UInt8, UInt8) -> Void,
-        onNoteOff: @escaping @Sendable (UInt8) -> Void,
+        onNoteOn: @escaping @Sendable (UInt8, UInt8, UInt8) -> Void, // note, velocity, channel
+        onNoteOff: @escaping @Sendable (UInt8, UInt8) -> Void, // note, channel
         onFinished: @escaping @Sendable () -> Void
     ) {
         stop()
@@ -58,8 +58,8 @@ final class PlaybackScheduler: @unchecked Sendable {
                     continue
                 }
                 switch event.kind {
-                case .noteOn: onNoteOn(event.note, event.velocity)
-                case .noteOff: onNoteOff(event.note)
+                case .noteOn: onNoteOn(event.note, event.velocity, event.channel)
+                case .noteOff: onNoteOff(event.note, event.channel)
                 }
                 index += 1
             }

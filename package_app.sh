@@ -14,8 +14,18 @@ VERSION="${PIPEPLAYER_VERSION:-1.0}"
 
 swift build -c release
 
-DIST_APP="dist/${APP_NAME}.app"
-rm -rf "dist"
+# Assembled and signed in a scratch directory outside this repo, not
+# directly in dist/ -- if the repo lives under an iCloud-synced folder
+# (e.g. ~/Documents), the file-provider daemon can re-tag large files
+# (the bundled .sf2s are tens of MB) with sync-tracking xattrs faster than
+# they can be stripped, racing codesign and making it fail with "resource
+# fork, Finder information, or similar detritus not allowed" -- every
+# retry in the synced folder hit the same race, but signing in /tmp
+# (never synced) avoided it outright. Only the final signed .app is
+# copied into dist/, once, at the end.
+BUILD_ROOT="$(mktemp -d)"
+trap 'rm -rf "${BUILD_ROOT}"' EXIT
+DIST_APP="${BUILD_ROOT}/${APP_NAME}.app"
 mkdir -p "${DIST_APP}/Contents/MacOS"
 mkdir -p "${DIST_APP}/Contents/Resources"
 
@@ -23,6 +33,19 @@ cp ".build/release/${APP_NAME}" "${DIST_APP}/Contents/MacOS/${APP_NAME}"
 
 if [ -f "Resources/AppIcon.icns" ]; then
     cp "Resources/AppIcon.icns" "${DIST_APP}/Contents/Resources/AppIcon.icns"
+fi
+
+# Bundled soundfonts (PipeDrones.sf2 from ePipesDrones.app, PipeEnsemble.sf2
+# from the ensemble_sounds set -- Practice Chanter/Real Pipes/Smallpipes).
+# These live only on disk, not in git (see .gitignore) -- copies every .sf2
+# found so adding another later doesn't require touching this script; a
+# fresh clone with none present still builds fine, just without bundled sound.
+if [ -d "Resources/SoundFonts" ]; then
+    shopt -s nullglob
+    for sf2 in Resources/SoundFonts/*.sf2; do
+        cp "$sf2" "${DIST_APP}/Contents/Resources/$(basename "$sf2")"
+    done
+    shopt -u nullglob
 fi
 
 cat > "${DIST_APP}/Contents/Info.plist" << PLIST
@@ -159,4 +182,9 @@ xattr -cr "${DIST_APP}"
 # Ad-hoc sign so Gatekeeper doesn't flag a locally-built, unsigned app.
 codesign --force --deep --sign - "${DIST_APP}"
 
-echo "Built ${DIST_APP}"
+FINAL_DIST_APP="dist/${APP_NAME}.app"
+rm -rf "dist"
+mkdir -p "dist"
+cp -R "${DIST_APP}" "${FINAL_DIST_APP}"
+
+echo "Built ${FINAL_DIST_APP}"

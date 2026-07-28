@@ -8,6 +8,13 @@ struct ScheduledMIDIEvent: Equatable {
     var kind: Kind
     var note: UInt8
     var velocity: UInt8
+    /// Assigned per-voice by `PlaybackEngine` after building (defaults to 0
+    /// here since `MIDIEventBuilder` itself only ever sees one voice at a
+    /// time and has no notion of "which voice is this"). Keeping each voice
+    /// on its own channel means two voices landing on the same pitch at
+    /// once are independent MIDI events — one voice's note-off can never
+    /// suppress or inherit another's velocity for a shared pitch.
+    var channel: UInt8 = 0
 }
 
 /// Walks a `Tune` in play order — unrolling repeats and first/second endings —
