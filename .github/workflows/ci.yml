@@ -12,6 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: List available Xcode versions
+        run: |
+          ls /Applications | grep Xcode
+          xcodebuild -version
+
       - name: Build
         run: swift build
 
