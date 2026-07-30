@@ -93,10 +93,11 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         }
     }
     private static let droneMIDINote: UInt8 = 36
-    // Half of the melody's default velocity — the drone sounds continuously
+    // 70% of the melody's default velocity — the drone sounds continuously
     // underneath the whole tune, so it needs to sit back in the mix rather
-    // than match the chanter's own loudness.
-    private static let droneVelocity: UInt8 = MIDIEventBuilder.defaultVelocity / 2
+    // than match the chanter's own loudness. Was 50% (half), but that read
+    // as too quiet against a real chanter/drone soundfont.
+    private static let droneVelocity: UInt8 = UInt8(Double(MIDIEventBuilder.defaultVelocity) * 0.7)
 
     private let engine = AVAudioEngine()
     private let sampler = AVAudioUnitSampler()
