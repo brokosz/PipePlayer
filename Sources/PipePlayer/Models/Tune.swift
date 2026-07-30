@@ -100,6 +100,38 @@ struct Measure: Equatable, Codable {
     var endingNumbers: [Int] = []
 }
 
+/// The standard Highland-piping dance-tune types, each with its own
+/// conventional default tempo — used when a source file doesn't state an
+/// explicit tempo of its own (BWW's `TuneTempo` record, ABC's `Q:` field).
+/// Matched case-insensitively against BWW's free-text "Y" (tune type) record
+/// or ABC's "R:" (rhythm) field.
+enum TuneRhythm: String, CaseIterable {
+    case march, strathspey, reel, hornpipe, jig
+
+    var defaultTempo: Double {
+        switch self {
+        case .march: return 82
+        case .strathspey: return 118
+        case .reel: return 86
+        case .hornpipe: return 88
+        case .jig: return 118
+        }
+    }
+
+    /// `hint` is free text like BWW's "Hornpipe." or ABC's "Reel" — matched
+    /// case-insensitively and tolerant of trailing punctuation or extra
+    /// words (e.g. "Strathspey & Reel", a common paired dance-set marking).
+    /// Strathspey is checked before reel/march so a combined "Strathspey &
+    /// Reel" hint resolves to the slower, defining half of the pair.
+    static func matching(_ hint: String) -> TuneRhythm? {
+        let lowered = hint.lowercased()
+        for rhythm in [TuneRhythm.strathspey, .hornpipe, .march, .jig, .reel] {
+            if lowered.contains(rhythm.rawValue) { return rhythm }
+        }
+        return nil
+    }
+}
+
 /// One repeated section of the tune (e.g. part A, part B). `MIDIEventBuilder`
 /// unrolls play order from `hasRepeat` plus each measure's `endingNumbers`.
 struct TunePart: Equatable, Codable {

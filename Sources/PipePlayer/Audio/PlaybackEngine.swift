@@ -376,6 +376,9 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
 
     func play() {
         guard !events.isEmpty else { return }
+        // Stops whichever other window/tab is currently playing — only one
+        // tune should ever be audibly playing across the whole app.
+        PlaybackCoordinator.shared.willStartPlaying(self)
         state = .playing
         startScheduler(from: currentTime)
         startUITicking()
@@ -383,6 +386,7 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     }
 
     func pause() {
+        PlaybackCoordinator.shared.stoppedPlaying(self)
         scheduler.stop()
         stopUITicking()
         state = .paused
@@ -391,6 +395,7 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     }
 
     func stop() {
+        PlaybackCoordinator.shared.stoppedPlaying(self)
         scheduler.stop()
         stopUITicking()
         state = .stopped

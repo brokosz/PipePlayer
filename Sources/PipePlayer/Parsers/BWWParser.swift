@@ -70,6 +70,7 @@ enum BWWParser {
         var composerIsFromExplicitTag = false
         var timeSignature = "2/4"
         var explicitTempo: Double?
+        var rhythmHint: String?
 
         let tokens = tokenize(text)
         var pendingEmbellishment: Embellishment?
@@ -131,7 +132,9 @@ enum BWWParser {
                     } else if !composerIsFromExplicitTag && composer == nil {
                         composer = value
                     }
-                default: break // "Y" tune type, or plain annotation text — not needed for playback
+                case "Y":
+                    if rhythmHint == nil { rhythmHint = value }
+                default: break // plain annotation text — not needed for playback
                 }
 
             case .meterFraction(let raw):
@@ -246,7 +249,16 @@ enum BWWParser {
         // badly). An earlier version of this only special-cased cut time;
         // generalizing to the actual rule fixes jigs/slip jigs/etc. too
         // instead of chasing each meter as its own one-off bug report.
-        let baseTempo = explicitTempo ?? 90
+        //
+        // With no explicit TuneTempo, fall back to the tune type's own
+        // conventional default (from the "Y" record, e.g. "Hornpipe.") rather
+        // than a single flat number for every dance type — a march and a
+        // jig with no stated tempo shouldn't both default to the same speed.
+        // This default is itself stated at the meter's natural beat unit,
+        // same as an explicit TuneTempo would be, so it gets the identical
+        // scaling treatment below.
+        let rhythm = rhythmHint.flatMap(TuneRhythm.matching)
+        let baseTempo = explicitTempo ?? rhythm?.defaultTempo ?? 90
         let tempo = baseTempo * Self.tempoScaleFactor(forTimeSignature: timeSignature)
 
         return Tune(title: title, composer: composer, tempo: tempo, timeSignature: timeSignature, parts: parts)

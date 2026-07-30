@@ -290,4 +290,50 @@ struct BWWParserTests {
         #expect(tune.timeSignature == "9/8")
         #expect(tune.tempo == 210)
     }
+
+    @Test func missingTuneTempoFallsBackToRhythmDefault() throws {
+        // No TuneTempo record at all — falls back to the "Y" tune-type
+        // record's own conventional default (118 for a jig) rather than a
+        // flat 90 for every dance type, then gets the same compound-meter
+        // scaling an explicit TuneTempo would (118 * 1.5 = 177).
+        let jigNoTempo = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Jig",(T,L,10,10,Times New Roman,14,0)
+        "Jig",(Y,C,0,0,Times New Roman,14,0)
+        & sharpf sharpc 6_8 I!''
+        ! LA_8 B_8 C_8 !
+        ! D_8 E_8 F_8 ''!I
+        """
+        let tune = try BWWParser.parse(jigNoTempo)
+        #expect(tune.tempo == 177)
+    }
+
+    @Test func explicitTuneTempoWinsOverRhythmDefault() throws {
+        let jigWithTempo = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Jig",(T,L,10,10,Times New Roman,14,0)
+        "Jig",(Y,C,0,0,Times New Roman,14,0)
+        TuneTempo,132
+        & sharpf sharpc 6_8 I!''
+        ! LA_8 B_8 C_8 !
+        ! D_8 E_8 F_8 ''!I
+        """
+        let tune = try BWWParser.parse(jigWithTempo)
+        #expect(tune.tempo == 198)
+    }
+
+    @Test func unrecognizedRhythmHintFallsBackToFlatDefault() throws {
+        let noHintTune = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Tune",(T,L,10,10,Times New Roman,14,0)
+        & sharpf sharpc 2_4 I!''
+        ! LA_8 B_8 !
+        ! C_8 D_8 ''!I
+        """
+        let tune = try BWWParser.parse(noHintTune)
+        #expect(tune.tempo == 90)
+    }
 }

@@ -20,6 +20,9 @@ struct PartProgressView: View {
     let tune: Tune
     let currentTime: TimeInterval
     let tempo: Double
+    /// Called with a part's start time when the user clicks its segment —
+    /// lets the transport seek straight to the beginning of that part.
+    var onSeek: (TimeInterval) -> Void = { _ in }
 
     private struct PartSpan {
         let index: Int
@@ -103,6 +106,9 @@ struct PartProgressView: View {
                 .padding(.leading, 6)
         }
         .frame(width: max(0, totalWidth * widthFraction))
+        .contentShape(Rectangle())
+        .onTapGesture { onSeek(span.start) }
+        .help("Jump to Part \(span.index + 1)")
     }
 
     private var currentPartDescription: String {

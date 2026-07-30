@@ -30,7 +30,8 @@ enum ABCParser {
         var composer: String?
         var timeSignature = "2/4"
         var defaultLength = 0.5 // quarter-beats per unit note length; ABC default L:1/8
-        var tempo = 90.0
+        var explicitTempo: Double?
+        var rhythmHint: String?
         var bodyLines: [String] = []
         var sawKey = false
 
@@ -58,11 +59,13 @@ enum ABCParser {
             case "L":
                 if let parsed = parseFraction(value) { defaultLength = parsed * 4 }
             case "Q":
-                tempo = parseTempo(value) ?? tempo
+                explicitTempo = parseTempo(value) ?? explicitTempo
+            case "R":
+                rhythmHint = value
             case "K":
                 sawKey = true
             default:
-                break // X:, R:, Z:, etc. — not needed for playback
+                break // X:, Z:, etc. — not needed for playback
             }
         }
         guard sawKey else { throw ABCParserError.missingKeyField }
@@ -70,6 +73,19 @@ enum ABCParser {
         let body = bodyLines.joined(separator: "\n")
         let notes = parseBody(body, defaultLength: defaultLength)
         let parts = splitIntoParts(notes)
+
+        // With no explicit Q: tempo, fall back to the tune type's own
+        // conventional default (from R:, e.g. "Reel") rather than a single
+        // flat number for every dance type. Like BWW's TuneTempo, this
+        // default is stated at the meter's own natural beat unit (e.g. 118
+        // for a jig means the dotted-quarter, not the quarter note itself),
+        // so it needs the same compound-meter scaling BWWParser applies to
+        // an explicit TuneTempo — otherwise the same tune type would end up
+        // at a different real speed depending on which format it came from.
+        let rhythm = rhythmHint.flatMap(TuneRhythm.matching)
+        let tempo = explicitTempo
+            ?? rhythm.map { $0.defaultTempo * BWWParser.tempoScaleFactor(forTimeSignature: timeSignature) }
+            ?? 90
 
         return Tune(title: title, composer: composer, tempo: tempo, timeSignature: timeSignature, parts: parts)
     }

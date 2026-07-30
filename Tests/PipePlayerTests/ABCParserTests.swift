@@ -48,4 +48,50 @@ struct ABCParserTests {
     @Test func emptyInputThrows() {
         #expect(throws: (any Error).self) { try ABCParser.parse("   \n  ") }
     }
+
+    @Test func missingTempoFallsBackToRhythmDefaultScaledForCompoundMeter() throws {
+        // No Q: field at all — falls back to R:'s tune-type default (118 for
+        // a jig), scaled the same way an explicit compound-meter tempo would
+        // be (118 * 1.5 = 177), so the same tune type ends up at the same
+        // real speed whether it came from ABC or BWW.
+        let jigNoTempo = """
+        X:1
+        T:Test Jig
+        M:6/8
+        L:1/8
+        R:Jig
+        K:A
+        A2A BAG|
+        """
+        let tune = try ABCParser.parse(jigNoTempo)
+        #expect(abs(tune.tempo - 177) < 0.001)
+    }
+
+    @Test func explicitTempoWinsOverRhythmDefault() throws {
+        let jigWithTempo = """
+        X:1
+        T:Test Jig
+        M:6/8
+        L:1/8
+        R:Jig
+        Q:1/4=150
+        K:A
+        A2A BAG|
+        """
+        let tune = try ABCParser.parse(jigWithTempo)
+        #expect(abs(tune.tempo - 150) < 0.001)
+    }
+
+    @Test func unrecognizedRhythmFallsBackToFlatDefault() throws {
+        let noHint = """
+        X:1
+        T:Test Tune
+        M:2/4
+        L:1/8
+        K:A
+        A2A BAG|
+        """
+        let tune = try ABCParser.parse(noHint)
+        #expect(abs(tune.tempo - 90) < 0.001)
+    }
 }

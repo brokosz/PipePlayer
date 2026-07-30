@@ -16,7 +16,12 @@ struct ContentView: View {
             header
             Divider()
             if let tune = appState.tune {
-                PartProgressView(tune: appState.progressTune ?? tune, currentTime: engine.currentTime, tempo: engine.tempo)
+                PartProgressView(
+                    tune: appState.progressTune ?? tune,
+                    currentTime: engine.currentTime,
+                    tempo: engine.tempo,
+                    onSeek: { engine.seek(to: $0) }
+                )
                 if engine.voices.count > 1 {
                     VoiceMuteControlsView(engine: engine)
                 }

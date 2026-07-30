@@ -9,6 +9,8 @@ struct TransportControlsView: View {
     @State private var pluginWindowController: PluginWindowController?
     @State private var isScrubbing = false
     @State private var scrubberValue: TimeInterval = 0
+    @FocusState private var isTempoFieldFocused: Bool
+    @State private var tempoDraftText: String = ""
 
     var body: some View {
         VStack(spacing: 12) {
@@ -52,15 +54,25 @@ struct TransportControlsView: View {
 
             LabeledContent("Tempo") {
                 HStack(spacing: 6) {
-                    TextField("Tempo", value: tempoBinding, format: .number)
+                    TextField("Tempo", text: $tempoDraftText)
                         .frame(width: 44)
                         .multilineTextAlignment(.trailing)
                         .textFieldStyle(.roundedBorder)
+                        .focused($isTempoFieldFocused)
+                        .onSubmit { commitTempoDraft() }
                     Stepper("", value: tempoBinding, in: 40...248)
                         .labelsHidden()
                     Text("BPM")
                         .foregroundStyle(.secondary)
                 }
+            }
+            .onAppear { tempoDraftText = String(Int(engine.displayTempo.rounded())) }
+            .onChange(of: engine.displayTempo) { newValue in
+                guard !isTempoFieldFocused else { return }
+                tempoDraftText = String(Int(newValue.rounded()))
+            }
+            .onChange(of: isTempoFieldFocused) { focused in
+                if !focused { commitTempoDraft() }
             }
 
             LabeledContent("Volume") {
@@ -166,6 +178,22 @@ struct TransportControlsView: View {
             get: { Int(engine.displayTempo.rounded()) },
             set: { engine.displayTempo = Double(min(248, max(40, $0))) }
         )
+    }
+
+    /// The tempo field commits only when the user finishes editing (Return
+    /// key or focus loss), not on every keystroke — typing directly into a
+    /// `TextField(value:format:)` bound live to `engine.displayTempo` meant
+    /// each intermediate digit (e.g. the "8" in "82") briefly set a real,
+    /// wildly different tempo, which rebuilds the playback schedule and
+    /// silences/restarts mid-note if a tune is playing. A plain `String`
+    /// draft that's only parsed and applied here avoids that entirely.
+    private func commitTempoDraft() {
+        guard let parsed = Int(tempoDraftText) else {
+            tempoDraftText = String(Int(engine.displayTempo.rounded()))
+            return
+        }
+        engine.displayTempo = Double(min(248, max(40, parsed)))
+        tempoDraftText = String(Int(engine.displayTempo.rounded()))
     }
 
     private var scrubber: some View {
