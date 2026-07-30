@@ -26,7 +26,7 @@ transport controls and a choice of sound sources.
   playing tab's title shows a 🔊 next to the tune name
 - Transport controls: play/pause/stop, seek, tempo (numeric field + stepper,
   20–248bpm), volume, loop, and an optional continuous drone (needs a
-  soundfont with a drone sample, like the bundled `PipeDrones.sf2`)
+  soundfont with a drone sample)
 - Click a segment of the part-progress bar to jump straight to that part's
   start
 - Tune type (march, strathspey, reel, hornpipe, jig) drives a sensible
