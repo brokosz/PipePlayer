@@ -83,8 +83,10 @@ enum ABCParser {
         // an explicit TuneTempo — otherwise the same tune type would end up
         // at a different real speed depending on which format it came from.
         let rhythm = rhythmHint.flatMap(TuneRhythm.matching)
+        let isFreeTempo = rhythmHint.map(TuneRhythm.isFreeTempoGenre) ?? false
+        let scaleFactor = isFreeTempo ? 1.0 : BWWParser.tempoScaleFactor(forTimeSignature: timeSignature)
         let tempo = explicitTempo
-            ?? rhythm.map { $0.defaultTempo * BWWParser.tempoScaleFactor(forTimeSignature: timeSignature) }
+            ?? rhythm.map { $0.defaultTempo * scaleFactor }
             ?? 90
 
         return Tune(title: title, composer: composer, tempo: tempo, timeSignature: timeSignature, parts: parts)

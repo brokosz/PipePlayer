@@ -2,52 +2,70 @@ import SwiftUI
 
 @main
 struct PipePlayerApp: App {
-    @StateObject private var appState = AppState()
-
     var body: some Scene {
-        WindowGroup {
-            ContentView(appState: appState)
-                .onOpenURL { url in
-                    // Finder's "Open With"/double-click and the custom
-                    // document-type registrations in package_app.sh's
-                    // Info.plist deliver the file here — without this,
-                    // Launch Services still launches/activates the app and
-                    // opens a window, but nothing ever reads the file.
-                    appState.open(url: url)
-                }
+        WindowGroup(id: "main") {
+            ContentView()
         }
         .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("Open…") {
-                    appState.presentOpenPanel()
-                }
-                .keyboardShortcut("o", modifiers: .command)
-
-                Menu("Open Recent") {
-                    if appState.recentURLs.isEmpty {
-                        Button("No Recent Files") {}
-                            .disabled(true)
-                    } else {
-                        ForEach(appState.recentURLs, id: \.self) { url in
-                            Button(url.lastPathComponent) {
-                                appState.open(url: url)
-                            }
-                        }
-                        Divider()
-                        Button("Clear Menu") {
-                            appState.clearRecents()
-                        }
-                    }
-                }
+                AppMenuCommands()
             }
             CommandGroup(after: .newItem) {
                 Divider()
-                Button("Close Tune") {
-                    appState.closeTune()
-                }
-                .disabled(appState.tune == nil)
+                CloseTuneMenuCommand()
             }
         }
+    }
+}
+
+/// Commands live at the `Scene` level, outside any single window's view
+/// hierarchy, so they can't just hold a reference to "the" `AppState` now
+/// that every window/tab owns its own — `@FocusedObject` (published by
+/// `ContentView`'s `.focusedSceneObject(appState)`) is what tells a menu
+/// command which window's state to act on.
+private struct AppMenuCommands: View {
+    @FocusedObject private var appState: AppState?
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("New Window") {
+            openWindow(id: "main")
+        }
+        .keyboardShortcut("n", modifiers: .command)
+
+        Button("Open…") {
+            appState?.presentOpenPanel()
+        }
+        .keyboardShortcut("o", modifiers: .command)
+        .disabled(appState == nil)
+
+        Menu("Open Recent") {
+            if let appState, !appState.recentURLs.isEmpty {
+                ForEach(appState.recentURLs, id: \.self) { url in
+                    Button(url.lastPathComponent) {
+                        appState.open(url: url)
+                    }
+                }
+                Divider()
+                Button("Clear Menu") {
+                    appState.clearRecents()
+                }
+            } else {
+                Button("No Recent Files") {}
+                    .disabled(true)
+            }
+        }
+    }
+}
+
+private struct CloseTuneMenuCommand: View {
+    @FocusedObject private var appState: AppState?
+
+    var body: some View {
+        Button("Close Tune") {
+            appState?.closeTune()
+        }
+        .disabled(appState?.tune == nil)
     }
 }

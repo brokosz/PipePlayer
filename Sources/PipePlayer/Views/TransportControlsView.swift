@@ -3,6 +3,10 @@ import AppKit
 import AVFoundation
 import UniformTypeIdentifiers
 
+private extension ClosedRange where Bound == Int {
+    func clamp(_ value: Int) -> Int { Swift.min(upperBound, Swift.max(lowerBound, value)) }
+}
+
 struct TransportControlsView: View {
     @ObservedObject var engine: PlaybackEngine
     @State private var availableAudioUnits: [AVAudioUnitComponent] = []
@@ -60,7 +64,7 @@ struct TransportControlsView: View {
                         .textFieldStyle(.roundedBorder)
                         .focused($isTempoFieldFocused)
                         .onSubmit { commitTempoDraft() }
-                    Stepper("", value: tempoBinding, in: 40...248)
+                    Stepper("", value: tempoBinding, in: Self.tempoRange)
                         .labelsHidden()
                     Text("BPM")
                         .foregroundStyle(.secondary)
@@ -173,10 +177,15 @@ struct TransportControlsView: View {
         engine.useCustomSoundFont(at: url)
     }
 
+    // A densely-ornamented slow air can genuinely need a much slower feel
+    // than the same BPM number gives a plainer tune of the same nominal
+    // type — 40 was too high a floor to dial some of those down to.
+    private static let tempoRange = 20...248
+
     private var tempoBinding: Binding<Int> {
         Binding(
             get: { Int(engine.displayTempo.rounded()) },
-            set: { engine.displayTempo = Double(min(248, max(40, $0))) }
+            set: { engine.displayTempo = Double(Self.tempoRange.clamp($0)) }
         )
     }
 
@@ -192,7 +201,7 @@ struct TransportControlsView: View {
             tempoDraftText = String(Int(engine.displayTempo.rounded()))
             return
         }
-        engine.displayTempo = Double(min(248, max(40, parsed)))
+        engine.displayTempo = Double(Self.tempoRange.clamp(parsed))
         tempoDraftText = String(Int(engine.displayTempo.rounded()))
     }
 

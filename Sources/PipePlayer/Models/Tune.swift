@@ -130,6 +130,24 @@ enum TuneRhythm: String, CaseIterable {
         }
         return nil
     }
+
+    /// Slow airs, laments, and songs are conventionally written in whatever
+    /// time signature groups their notes most legibly — often a compound one
+    /// like 6/8 — but, unlike a jig or slip jig, aren't danced to a dotted-
+    /// quarter pulse at all: they're free, rubato pieces where the stated
+    /// tempo means the plain written beat, full stop. Standard compound-time
+    /// notation (see e.g. mymusictheory.com's compound-time-signatures page)
+    /// says a 6/8 tempo mark means the dotted quarter — true for a real jig
+    /// (confirmed against "Biddy From Sligo": TuneTempo,132 plays at
+    /// quarter-equivalent 198) — but applying that same rule to a 6/8 air
+    /// inflates its tempo by 50% or more for a piece that was never counted
+    /// in dotted-quarter beats to begin with. Checked before computing a
+    /// compound-meter scale factor from the time signature, so this genre
+    /// carve-out overrides what the meter alone would otherwise imply.
+    static func isFreeTempoGenre(_ hint: String) -> Bool {
+        let lowered = hint.lowercased()
+        return ["air", "lament", "song"].contains { lowered.contains($0) }
+    }
 }
 
 /// One repeated section of the tune (e.g. part A, part B). `MIDIEventBuilder`

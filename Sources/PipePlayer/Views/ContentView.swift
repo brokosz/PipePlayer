@@ -2,13 +2,22 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @ObservedObject var appState: AppState
-    @ObservedObject var engine: PlaybackEngine
+    // Owned here, per window/tab — previously a single instance shared by
+    // the whole app (declared once on `PipePlayerApp`), which meant every
+    // tab showed and controlled the exact same tune; a second tab wasn't an
+    // independent tune at all, just another view onto the same one (most
+    // visibly, they all showed whichever tune was opened *last* in their
+    // window title). Each window now gets its own `AppState`/`PlaybackEngine`;
+    // `PlaybackCoordinator` (see `PlaybackEngine.play()`) is what still makes
+    // sure only one of them is ever audibly playing at once.
+    @StateObject private var appState: AppState
+    @ObservedObject private var engine: PlaybackEngine
     @State private var isTargetedForDrop = false
 
-    init(appState: AppState) {
-        self.appState = appState
-        self.engine = appState.engine
+    init() {
+        let state = AppState()
+        _appState = StateObject(wrappedValue: state)
+        engine = state.engine
     }
 
     var body: some View {
@@ -32,6 +41,7 @@ struct ContentView: View {
         }
         .padding()
         .frame(minWidth: 480, minHeight: 460)
+        .navigationTitle(appState.tune?.title ?? "PipePlayer")
         .background(dropHighlightOverlay)
         .onDrop(of: [.fileURL], isTargeted: $isTargetedForDrop) { providers in
             handleDrop(providers)
@@ -42,6 +52,14 @@ struct ContentView: View {
             // with it rather than keep running with no window to control it.
             engine.stop()
         }
+        .onOpenURL { url in
+            // Finder's "Open With"/double-click and the custom document-type
+            // registrations in package_app.sh's Info.plist deliver the file
+            // here — without this, Launch Services still launches/activates
+            // the app and opens a window, but nothing ever reads the file.
+            appState.open(url: url)
+        }
+        .focusedSceneObject(appState)
         .alert(
             "Couldn't open file",
             isPresented: Binding(

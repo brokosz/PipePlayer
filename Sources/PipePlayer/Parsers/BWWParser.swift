@@ -259,7 +259,9 @@ enum BWWParser {
         // scaling treatment below.
         let rhythm = rhythmHint.flatMap(TuneRhythm.matching)
         let baseTempo = explicitTempo ?? rhythm?.defaultTempo ?? 90
-        let tempo = baseTempo * Self.tempoScaleFactor(forTimeSignature: timeSignature)
+        let isFreeTempo = rhythmHint.map(TuneRhythm.isFreeTempoGenre) ?? false
+        let scaleFactor = isFreeTempo ? 1.0 : Self.tempoScaleFactor(forTimeSignature: timeSignature)
+        let tempo = baseTempo * scaleFactor
 
         return Tune(title: title, composer: composer, tempo: tempo, timeSignature: timeSignature, parts: parts)
     }

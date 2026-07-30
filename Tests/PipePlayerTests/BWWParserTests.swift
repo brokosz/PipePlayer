@@ -336,4 +336,41 @@ struct BWWParserTests {
         let tune = try BWWParser.parse(noHintTune)
         #expect(tune.tempo == 90)
     }
+
+    @Test func slowAirInCompoundTimeIsNotScaledLikeADanceTune() throws {
+        // A real reported bug: a slow air written in 6/8 (common for
+        // phrasing, not because it's danced to a dotted-quarter pulse) was
+        // getting the same "beat = dotted quarter" compound-meter scaling
+        // as a jig, playing back 50%+ faster than its stated TuneTempo. An
+        // air/lament/song "Y" record now opts out of that scaling entirely —
+        // TuneTempo,60 under 6/8 should play at literally 60, not 90.
+        let slowAir = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Air",(T,L,10,10,Times New Roman,14,0)
+        "Slow Air",(Y,C,0,0,Times New Roman,14,0)
+        TuneTempo,60
+        & sharpf sharpc 6_8 I!''
+        ! LA_8 B_8 C_8 !
+        ! D_8 E_8 F_8 ''!I
+        """
+        let tune = try BWWParser.parse(slowAir)
+        #expect(tune.timeSignature == "6/8")
+        #expect(tune.tempo == 60)
+    }
+
+    @Test func lamentInCompoundTimeIsNotScaled() throws {
+        let lament = """
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Lament",(T,L,10,10,Times New Roman,14,0)
+        "Lament",(Y,C,0,0,Times New Roman,14,0)
+        TuneTempo,55
+        & sharpf sharpc 9_8 I!''
+        ! LA_8 B_8 C_8 !
+        ! D_8 E_8 F_8 ''!I
+        """
+        let tune = try BWWParser.parse(lament)
+        #expect(tune.tempo == 55)
+    }
 }
