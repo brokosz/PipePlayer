@@ -41,7 +41,7 @@ struct ContentView: View {
         }
         .padding()
         .frame(minWidth: 480, minHeight: 460)
-        .navigationTitle(appState.tune?.title ?? "PipePlayer")
+        .navigationTitle(windowTitle)
         .background(dropHighlightOverlay)
         .onDrop(of: [.fileURL], isTargeted: $isTargetedForDrop) { providers in
             handleDrop(providers)
@@ -71,6 +71,16 @@ struct ContentView: View {
         } message: {
             Text(appState.errorMessage ?? "")
         }
+    }
+
+    // A native window/tab title is plain text — no way to place an actual
+    // SF Symbol glyph in it — so a currently-playing tab is marked with a
+    // speaker emoji prefix instead, the closest plain-text equivalent to
+    // "speaker.wave.2". Only shown while actually playing (not paused or
+    // stopped), so it reads as "this is the tab making sound right now."
+    private var windowTitle: String {
+        let title = appState.tune?.title ?? "PipePlayer"
+        return engine.state == .playing ? "🔊 \(title)" : title
     }
 
     private var header: some View {
