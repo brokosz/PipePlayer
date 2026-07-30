@@ -15,9 +15,25 @@ transport controls and a choice of sound sources.
   any of them
 - Full grace-note/embellishment expansion (doublings, throws, grips,
   taorluath, birl, strikes, crunluath, and the wider piobaireachd vocabulary)
-  using ground-truth grace-note sequences, not approximated ones
-- Transport controls: play/pause/stop, seek, tempo (numeric field + stepper),
-  volume, loop
+  using ground-truth grace-note sequences, not approximated ones — grace
+  notes borrow their time from the note they decorate rather than adding new,
+  un-notated time, so a heavily-ornamented tune still plays at its stated
+  tempo
+- Multiple tunes can be open at once as native macOS window tabs, each with
+  fully independent playback state — switching tabs never interrupts
+  whichever one is playing, but starting playback in a different tab stops
+  it, so only one tune is ever audibly playing at a time. The currently
+  playing tab's title shows a 🔊 next to the tune name
+- Transport controls: play/pause/stop, seek, tempo (numeric field + stepper,
+  20–248bpm), volume, loop, and an optional continuous drone (needs a
+  soundfont with a drone sample, like the bundled `PipeDrones.sf2`)
+- Click a segment of the part-progress bar to jump straight to that part's
+  start
+- Tune type (march, strathspey, reel, hornpipe, jig) drives a sensible
+  default tempo when a file doesn't specify one itself; slow airs and
+  laments are recognized separately and exempted from the compound-time
+  "beat = dotted quarter" scaling dance tunes need, so a 6/8 air doesn't play
+  back inflated
 - Three interchangeable sound sources:
   - Apple's built-in General MIDI bank (all 128 instruments, not just
     Bagpipe)
@@ -96,16 +112,22 @@ paths, stored via `UserDefaults`) so File → Open Recent works across launches.
   tokens fall back to a single conservative grace note rather than a fully
   authoritative figure — the tune still loads and plays, just with a less
   precise ornament in that one spot.
-- `TuneTempo` is read at the meter's own natural tempo-marking beat unit, same
-  as standard notation everywhere: quarter note for simple time (2/4, 3/4,
-  4/4 — read flat, unscaled), half note for cut time (2/2, ×2), and the
-  dotted quarter for compound time (6/8, 9/8, 12/8, ×1.5) — confirmed
-  directly against a real cut-time reel and a real jig, both of which
-  otherwise dragged well under their intended speed. The tempo field in the
-  transport controls always shows the number as written in the file (e.g.
-  132 for a jig), even though actual playback runs at the scaled-up
-  equivalent (198) — only BWW/BMW needs this; MusicXML's `<sound tempo>` is
-  always flat quarter-note bpm by spec regardless of written meter.
+- `TuneTempo`/ABC's `Q:` are read at the meter's own natural tempo-marking
+  beat unit, same as standard notation everywhere: quarter note for simple
+  time (2/4, 3/4, 4/4 — read flat, unscaled), half note for cut time (2/2,
+  ×2), and the dotted quarter for compound time (6/8, 9/8, 12/8, ×1.5) —
+  confirmed directly against a real cut-time reel and a real jig, both of
+  which otherwise dragged well under their intended speed. The tempo field in
+  the transport controls always shows the number as written in the file
+  (e.g. 132 for a jig), even though actual playback runs at the scaled-up
+  equivalent (198) — only BWW/BMW/ABC need this; MusicXML's `<sound tempo>`
+  is always flat quarter-note bpm by spec regardless of written meter. Slow
+  airs, laments, and songs (from BWW's "Y" record or ABC's `R:` field) are
+  exempted from the compound-time ×1.5/×3 scaling — that convention is for
+  danced-to compound tunes and doesn't apply to a free, rubato air just
+  because it happens to be written in 6/8. When no tempo is stated at all,
+  the tune type (march, strathspey, reel, hornpipe, jig) picks a sensible
+  default instead of a single flat number for every dance.
 - ABC and BWW/BMW are single-voice only — the grammar itself has no notion of
   multiple simultaneous parts, so every file loads as one "Melody" voice.
   Multi-voice simultaneous playback (see below) is a MusicXML-only feature.
