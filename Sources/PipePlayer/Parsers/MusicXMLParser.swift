@@ -59,12 +59,124 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
 
     static func parseVoices(_ data: Data) throws -> [Voice] {
         let parser = MusicXMLParser()
+        parser.ambiguousOctaveRanks = octaveRanks(scanning: data)
         let xmlParser = XMLParser(data: data)
         xmlParser.delegate = parser
         guard xmlParser.parse() else {
             throw parser.parseError ?? MusicXMLParserError.invalidXML
         }
         return try parser.buildVoices()
+    }
+
+    /// A lightweight pre-pass over the whole document, keyed by part id then
+    /// 'G'/'A', recording the (lowest, highest) octave number written for
+    /// that letter anywhere in the part — grace, chord, and main notes alike.
+    ///
+    /// G and A are the only chanter pitches that exist in both a low and a
+    /// high register, so they're the only ones where a written octave number
+    /// is ambiguous at all. Two real files from the same OMR exporter
+    /// (`epm_note_extractor.py`) turned out to use a perfectly consistent
+    /// convention for this: whichever octave that exporter used for a
+    /// letter's LOW instances is always one lower than whichever it used for
+    /// that letter's HIGH instances, *within that file* — even though the
+    /// absolute octave numbers themselves don't match this app's own Pitch
+    /// enum's assumed baseline (their "high G" written as G4 collides
+    /// exactly with this app's own lowG constant). Checked against a real
+    /// tune with an independent, known-correct BWW transcription of the same
+    /// piece: this rule recovered the correct register for all 39 ambiguous
+    /// G/A notes, where a melodic-contour ("closest to the previous note")
+    /// heuristic got several wrong — piping tunes routinely leap by a full
+    /// octave as a deliberate melodic figure (e.g. a turn dropping to low A
+    /// between two E's), which no local-distance heuristic can distinguish
+    /// from a written-octave mixup.
+    ///
+    /// Only used when a letter has exactly 2 distinct octaves in the part;
+    /// with 0, 1, or 3+ distinct octaves there's no reliable signal here, so
+    /// `finishNote()` falls back to `Pitch.nearest(toMIDINumber:previous:)`.
+    private static func octaveRanks(scanning data: Data) -> [String: [Character: (low: Int, high: Int)]] {
+        let scanner = OctaveScanner()
+        let xmlParser = XMLParser(data: data)
+        xmlParser.delegate = scanner
+        _ = xmlParser.parse()
+
+        var result: [String: [Character: (low: Int, high: Int)]] = [:]
+        for (partID, octavesByLetter) in scanner.octavesByPart {
+            for (letter, octaves) in octavesByLetter where octaves.count == 2 {
+                let sorted = octaves.sorted()
+                result[partID, default: [:]][letter] = (low: sorted[0], high: sorted[1])
+            }
+        }
+        return result
+    }
+
+    /// Delegate for `octaveRanks(scanning:)` — only tracks `<part id>` plus
+    /// each `<pitch><step>`/`<octave>` pair for G/A notes with no `<alter>`
+    /// (an altered G/A isn't one of the chanter's two fixed G/A pitches, so
+    /// it shouldn't feed the register-ranking signal).
+    private final class OctaveScanner: NSObject, XMLParserDelegate {
+        private(set) var octavesByPart: [String: [Character: Set<Int>]] = [:]
+
+        private var currentPartID: String?
+        private var isInsideNote = false
+        private var pendingStep: String?
+        private var pendingOctave: Int?
+        private var pendingAlter = 0
+        private var textBuffer = ""
+
+        func parser(
+            _ parser: XMLParser,
+            didStartElement elementName: String,
+            namespaceURI: String?,
+            qualifiedName qName: String?,
+            attributes attributeDict: [String: String] = [:]
+        ) {
+            textBuffer = ""
+            switch elementName {
+            case "part":
+                if let id = attributeDict["id"] { currentPartID = id }
+            case "note":
+                isInsideNote = true
+                pendingStep = nil
+                pendingOctave = nil
+                pendingAlter = 0
+            default:
+                break
+            }
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
+            textBuffer += string
+        }
+
+        func parser(
+            _ parser: XMLParser,
+            didEndElement elementName: String,
+            namespaceURI: String?,
+            qualifiedName qName: String?
+        ) {
+            let text = textBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            switch elementName {
+            case "step":
+                guard isInsideNote else { break }
+                pendingStep = text
+            case "octave":
+                guard isInsideNote else { break }
+                pendingOctave = Int(text)
+            case "alter":
+                guard isInsideNote else { break }
+                pendingAlter = Int(Double(text) ?? 0)
+            case "note":
+                isInsideNote = false
+                guard let partID = currentPartID,
+                      let step = pendingStep, step == "G" || step == "A",
+                      pendingAlter == 0,
+                      let octave = pendingOctave,
+                      let letter = step.first else { break }
+                octavesByPart[partID, default: [:]][letter, default: []].insert(octave)
+            default:
+                break
+            }
+        }
     }
 
     // MARK: - Per-part accumulated state
@@ -116,6 +228,7 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
 
     // MARK: - Accumulated score-level state (shared across all voices)
 
+    private var ambiguousOctaveRanks: [String: [Character: (low: Int, high: Int)]] = [:]
     private var parseError: Error?
     private var workTitle: String?
     private var movementTitle: String?
@@ -541,7 +654,20 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
 
         guard let step = noteStep, let octave = noteOctave else { return }
         let midi = Self.midiNumber(step: step, octave: octave, alter: noteAlter)
-        let pitch = Pitch.nearest(toMIDINumber: midi, previous: current.lastResolvedPitch)
+
+        let pitch: Pitch
+        if noteAlter == 0, let letter = step.first, letter == "G" || letter == "A",
+           let rank = ambiguousOctaveRanks[current.id]?[letter] {
+            if octave == rank.low {
+                pitch = letter == "G" ? .lowG : .lowA
+            } else if octave == rank.high {
+                pitch = letter == "G" ? .highG : .highA
+            } else {
+                pitch = Pitch.nearest(toMIDINumber: midi, previous: current.lastResolvedPitch)
+            }
+        } else {
+            pitch = Pitch.nearest(toMIDINumber: midi, previous: current.lastResolvedPitch)
+        }
         current.lastResolvedPitch = pitch
 
         let duration: Double

@@ -86,14 +86,11 @@ struct MusicXMLParserTests {
     @Test func graceNoteAndAlterMapping() throws {
         let tune = try MusicXMLParser.parse(Data(sample.utf8))
         let measure2 = tune.parts[0].measures[1].notes
-        // The grace note is written as G5 (unambiguously highG in isolation),
-        // but it's immediately preceded by lowA — since G appears twice in
-        // the chanter's scale, melodic-contour disambiguation (see
-        // `Pitch.nearest(toMIDINumber:previous:)`) picks lowG here, 2
-        // semitones from lowA rather than a 10-semitone leap to highG. This
-        // matches real transcribed tunes, where the written octave alone
-        // isn't a reliable signal for which G/A register was meant.
-        #expect(measure2.map(\.pitch) == [.lowA, .lowG, .c])
+        // G is written at two distinct octaves across this part (4 and 5) —
+        // the octave-rank pre-scan (`MusicXMLParser.octaveRanks(scanning:)`)
+        // picks this up and maps the lower one (4) to lowG, the higher one
+        // (5) to highG, regardless of melodic context.
+        #expect(measure2.map(\.pitch) == [.lowA, .highG, .c])
         #expect(abs(measure2[0].duration - 0.5) < 0.0001)
         #expect(measure2[1].duration < 0.1) // grace note — short, borrowed time
         #expect(abs(measure2[2].duration - 0.5) < 0.0001)
@@ -130,6 +127,44 @@ struct MusicXMLParserTests {
         let tune = try MusicXMLParser.parse(Data(xml.utf8))
         let notes = tune.parts[0].measures[0].notes
         #expect(notes.map(\.pitch) == [.d, .highG, .f, .highA])
+    }
+
+    @Test func octaveRankScanResolvesGAndARegisterEvenAgainstMelodicLeaps() throws {
+        // A real OMR exporter (epm_note_extractor.py) writes an entire
+        // tune's low G/A register at octave 3 and high register at octave 4
+        // — one full octave below what this app's own Pitch enum assumes
+        // (lowG/lowA = octave 4, highG/highA = octave 5) — but does so
+        // *consistently* throughout the file. Verified against a real tune
+        // with an independent, known-correct BWW transcription: this part
+        // includes a genuine "E, low A, E" turn figure — a full-octave leap
+        // down and back that a melodic-contour ("nearest to previous note")
+        // heuristic gets wrong, since a leap to highA would be a smaller,
+        // more "plausible" jump. Scanning the whole part first to learn
+        // that this file's G/A octaves are {3: low, 4: high} resolves it
+        // correctly regardless of the surrounding notes.
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <score-partwise version="4.1">
+          <part-list><score-part id="P1"><part-name>Chanter</part-name></score-part></part-list>
+          <part id="P1">
+            <measure number="1">
+              <attributes>
+                <divisions>1</divisions>
+                <time><beats>4</beats><beat-type>4</beat-type></time>
+              </attributes>
+              <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+              <note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+              <note><pitch><step>A</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type></note>
+              <note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+              <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+              <note><pitch><step>G</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type></note>
+            </measure>
+          </part>
+        </score-partwise>
+        """
+        let tune = try MusicXMLParser.parse(Data(xml.utf8))
+        let notes = tune.parts[0].measures[0].notes
+        #expect(notes.map(\.pitch) == [.highG, .e, .lowA, .e, .highA, .lowG])
     }
 
     @Test func pitchMatchesByPitchClassBeforeFallingBackToRawDistance() {
