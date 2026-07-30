@@ -86,10 +86,139 @@ struct MusicXMLParserTests {
     @Test func graceNoteAndAlterMapping() throws {
         let tune = try MusicXMLParser.parse(Data(sample.utf8))
         let measure2 = tune.parts[0].measures[1].notes
-        #expect(measure2.map(\.pitch) == [.lowA, .highG, .c])
+        // The grace note is written as G5 (unambiguously highG in isolation),
+        // but it's immediately preceded by lowA — since G appears twice in
+        // the chanter's scale, melodic-contour disambiguation (see
+        // `Pitch.nearest(toMIDINumber:previous:)`) picks lowG here, 2
+        // semitones from lowA rather than a 10-semitone leap to highG. This
+        // matches real transcribed tunes, where the written octave alone
+        // isn't a reliable signal for which G/A register was meant.
+        #expect(measure2.map(\.pitch) == [.lowA, .lowG, .c])
         #expect(abs(measure2[0].duration - 0.5) < 0.0001)
         #expect(measure2[1].duration < 0.1) // grace note — short, borrowed time
         #expect(abs(measure2[2].duration - 0.5) < 0.0001)
+    }
+
+    @Test func melodicContourDisambiguatesRepeatedGAndAOctaves() throws {
+        // Two real files from the same source both wrote their intended
+        // "high" G/A register at an octave number that collides exactly with
+        // this app's lowG/lowA MIDI values (e.g. their high G computed to
+        // MIDI 67, identical to lowG) — raw semitone distance can never
+        // recover the correct register there, since the numbers are
+        // literally the same. This reproduces that pattern directly: a run
+        // of upper-register notes (d, e, f) surrounding ambiguous G/A notes
+        // should resolve them to the HIGH octave, since jumping down to the
+        // low octave and back would be a large, un-piping-like leap.
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <score-partwise version="4.1">
+          <part-list><score-part id="P1"><part-name>Chanter</part-name></score-part></part-list>
+          <part id="P1">
+            <measure number="1">
+              <attributes>
+                <divisions>1</divisions>
+                <time><beats>4</beats><beat-type>4</beat-type></time>
+              </attributes>
+              <note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+              <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+              <note><pitch><step>F</step><octave>4</octave><alter>1</alter></pitch><duration>1</duration><type>quarter</type></note>
+              <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+            </measure>
+          </part>
+        </score-partwise>
+        """
+        let tune = try MusicXMLParser.parse(Data(xml.utf8))
+        let notes = tune.parts[0].measures[0].notes
+        #expect(notes.map(\.pitch) == [.d, .highG, .f, .highA])
+    }
+
+    @Test func pitchMatchesByPitchClassBeforeFallingBackToRawDistance() {
+        // Real file found in the wild (auto-extracted by a third-party
+        // tool, "epm_note_extractor.py", likely from audio): several notes
+        // were written a full octave or more below the chanter's actual
+        // range — A3, D4, F#4, B3 — alongside correctly-written G4/A4. A
+        // pure raw-semitone-distance match collapsed ALL of them onto lowG
+        // (67) — the chanter's lowest note, and so also numerically closest
+        // to anything below the whole range — reported as "the same low
+        // note over and over." Matching pitch class first (then using raw
+        // distance only to pick octave among same-class candidates, or as a
+        // last resort with no pitch-class match at all) fixes this.
+        #expect(Pitch.nearest(toMIDINumber: 57) == .lowA)  // A3 -> lowA, not lowG
+        #expect(Pitch.nearest(toMIDINumber: 62) == .d)     // D4 -> d, not lowG
+        #expect(Pitch.nearest(toMIDINumber: 66) == .f)     // F#4 -> f, not lowG
+        #expect(Pitch.nearest(toMIDINumber: 59) == .b)     // B3 -> b, not lowG
+        #expect(Pitch.nearest(toMIDINumber: 67) == .lowG)  // G4 -> lowG, correctly
+        #expect(Pitch.nearest(toMIDINumber: 69) == .lowA)  // A4 -> lowA, correctly
+    }
+
+    @Test func pitchClassMatchStillPicksNearestOctaveForGAndA() {
+        // G and A each appear twice in the chanter's scale (low and high
+        // octave) — once pitch class narrows it to {lowG, highG} or
+        // {lowA, highA}, raw distance should still decide which one. G's
+        // pitch class only recurs every 12 semitones, so there's no "middle"
+        // value strictly between lowG (67) and highG (79) to test the
+        // tiebreak against — using G3 (55, an octave below lowG) and G6 (91,
+        // an octave above highG) instead.
+        #expect(Pitch.nearest(toMIDINumber: 67) == .lowG)  // G4, exact
+        #expect(Pitch.nearest(toMIDINumber: 79) == .highG) // G5, exact
+        #expect(Pitch.nearest(toMIDINumber: 55) == .lowG)  // G3: closer to lowG (67) than highG (79)
+        #expect(Pitch.nearest(toMIDINumber: 91) == .highG) // G6: closer to highG (79) than lowG (67)
+    }
+
+    @Test func tupletScalesDurationByActualOverNormalNotes() throws {
+        // A triplet's <type> is still the plain written note value (e.g. an
+        // eighth-note triplet is <type>eighth</type> on each note) — without
+        // reading <time-modification>, three triplet eighths would play as
+        // three full eighths (1.5 beats total instead of the correct 1.0),
+        // a real, confirmed gap found by auditing the parser against the
+        // MusicXML 4.0 spec rather than only real files.
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <score-partwise version="3.1">
+          <part-list><score-part id="P1"><part-name>Chanter</part-name></score-part></part-list>
+          <part id="P1">
+            <measure number="1">
+              <attributes><divisions>4</divisions></attributes>
+              <note>
+                <pitch><step>A</step><octave>4</octave></pitch>
+                <duration>2</duration>
+                <type>eighth</type>
+                <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+              </note>
+              <note>
+                <pitch><step>B</step><octave>4</octave></pitch>
+                <duration>2</duration>
+                <type>eighth</type>
+                <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+              </note>
+              <note>
+                <pitch><step>C</step><octave>5</octave><alter>1</alter></pitch>
+                <duration>2</duration>
+                <type>eighth</type>
+                <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+              </note>
+              <note>
+                <pitch><step>D</step><octave>5</octave></pitch>
+                <duration>4</duration>
+                <type>quarter</type>
+              </note>
+            </measure>
+          </part>
+        </score-partwise>
+        """
+        let tune = try MusicXMLParser.parse(Data(xml.utf8))
+        let notes = tune.parts[0].measures[0].notes
+        // Each triplet eighth: 0.5 (written eighth) * 2/3 = 0.3333...
+        #expect(abs(notes[0].duration - (0.5 * 2.0 / 3.0)) < 0.0001)
+        #expect(abs(notes[1].duration - (0.5 * 2.0 / 3.0)) < 0.0001)
+        #expect(abs(notes[2].duration - (0.5 * 2.0 / 3.0)) < 0.0001)
+        // Non-tuplet quarter note right after: unaffected, still a full 1.0.
+        #expect(abs(notes[3].duration - 1.0) < 0.0001)
+        // The three triplet notes plus the quarter should sum to exactly
+        // 2.0 beats (one eighth-triplet "group" = 1 written beat, matching
+        // the two eighths' worth of time it's squeezed into).
+        let totalTripletDuration = notes[0].duration + notes[1].duration + notes[2].duration
+        #expect(abs(totalTripletDuration - 1.0) < 0.0001)
     }
 
     @Test func compressedMXLRoundTrips() throws {

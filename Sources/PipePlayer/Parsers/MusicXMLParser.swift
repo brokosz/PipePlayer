@@ -85,6 +85,10 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
         var partHasRepeat = false
         var shouldFlushPartAtMeasureEnd = false
         var divisions: Double = 1
+        // Last resolved (non-rest) melodic pitch in this part, used to
+        // disambiguate G/A's low/high octave by melodic contour — see
+        // `Pitch.nearest(toMIDINumber:previous:)`.
+        var lastResolvedPitch: Pitch?
 
         init(id: String, name: String) {
             self.id = id
@@ -163,6 +167,11 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
     private var noteIsGrace = false
     private var noteIsChord = false
     private var noteIsTieStart = false
+    // <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+    // for tuplets (e.g. a triplet eighth: <type>eighth</type> but sounds for
+    // only 2/3 of a written eighth's duration, not the full written value).
+    private var noteTupletActualNotes: Int?
+    private var noteTupletNormalNotes: Int?
 
     private var textBuffer = ""
     private var isInsideCreatorComposer = false
@@ -452,6 +461,14 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
             guard current != nil else { break }
             noteType = text
 
+        case "actual-notes":
+            guard current != nil else { break }
+            noteTupletActualNotes = Int(text)
+
+        case "normal-notes":
+            guard current != nil else { break }
+            noteTupletNormalNotes = Int(text)
+
         case "note":
             guard current != nil else { break }
             finishNote()
@@ -489,6 +506,8 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
             noteIsGrace = false
             noteIsChord = false
             noteIsTieStart = false
+            noteTupletActualNotes = nil
+            noteTupletNormalNotes = nil
         }
 
         guard let current else { return }
@@ -502,9 +521,19 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
 
         let dotMultiplier = 1.0 + (noteDotCount > 0 ? (1.0 - pow(0.5, Double(noteDotCount))) : 0.0)
         let baseDuration = self.baseDuration(divisions: current.divisions)
+        // A tuplet's <type> is still the plain written note value (e.g. a
+        // triplet eighth is still <type>eighth</type>) — without this, a
+        // triplet eighth would play as a full eighth (1.5x too long) instead
+        // of the 2/3 it actually sounds for.
+        let tupletRatio: Double
+        if let actual = noteTupletActualNotes, let normal = noteTupletNormalNotes, actual > 0 {
+            tupletRatio = Double(normal) / Double(actual)
+        } else {
+            tupletRatio = 1.0
+        }
 
         if noteIsRest {
-            var note = NoteEvent(pitch: .lowA, duration: baseDuration * dotMultiplier, embellishment: nil, isRest: true)
+            var note = NoteEvent(pitch: .lowA, duration: baseDuration * dotMultiplier * tupletRatio, embellishment: nil, isRest: true)
             note.isTiedToNext = false
             current.currentNotes.append(note)
             return
@@ -512,7 +541,8 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
 
         guard let step = noteStep, let octave = noteOctave else { return }
         let midi = Self.midiNumber(step: step, octave: octave, alter: noteAlter)
-        let pitch = Pitch.nearest(toMIDINumber: midi)
+        let pitch = Pitch.nearest(toMIDINumber: midi, previous: current.lastResolvedPitch)
+        current.lastResolvedPitch = pitch
 
         let duration: Double
         if noteIsGrace {
@@ -522,7 +552,7 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
             // with how BWW-sourced grace notes are timed.
             duration = 0.035
         } else {
-            duration = baseDuration * dotMultiplier
+            duration = baseDuration * dotMultiplier * tupletRatio
         }
 
         var note = NoteEvent(pitch: pitch, duration: duration, embellishment: nil)

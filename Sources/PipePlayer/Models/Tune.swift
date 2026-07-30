@@ -28,11 +28,44 @@ enum Pitch: Int, CaseIterable, Codable, Equatable {
 
     /// Maps an arbitrary MIDI note number (as computed from MusicXML's
     /// step/octave/alter) onto the nearest of the 9 fixed chanter pitches.
-    /// A MusicXML file authored for bagpipe music should already sit at or
-    /// very near these exact values — this just absorbs octave/enharmonic
-    /// mismatches rather than failing outright on anything slightly off.
-    static func nearest(toMIDINumber midi: Int) -> Pitch {
-        allCases.min(by: { abs($0.rawValue - midi) < abs($1.rawValue - midi) }) ?? .lowA
+    ///
+    /// Matches by pitch class (step + alter, ignoring octave) first, falling
+    /// back to raw semitone distance only when nothing shares that pitch
+    /// class. A real file (auto-extracted by a third-party tool, likely from
+    /// audio) wrote several notes a full octave or more below the chanter's
+    /// actual range — A3, D4, F#4, B3 alongside correctly-written G4/A4 — and
+    /// a pure raw-distance match collapsed ALL of them onto lowG (the
+    /// chanter's lowest note, so also the closest available pitch to
+    /// anything written below the whole range), since 57 (A3) is numerically
+    /// closer to 67 (lowG) than to 69 (lowA) despite obviously being "an A".
+    /// Matching pitch class first respects that these are the same written
+    /// note in the wrong octave, not different notes that happen to be low.
+    ///
+    /// G and A each appear twice in the chanter's scale (low and high
+    /// octave), so pitch class alone doesn't resolve them. Raw semitone
+    /// distance to the written MIDI number isn't reliable here either: two
+    /// real files from the same source both write their "high" G/A register
+    /// at an octave number that lands EXACTLY on this app's lowG/lowA MIDI
+    /// values (e.g. their high G is G4=67, identical to this app's lowG
+    /// constant) — there is no distance-based way to tell those apart, since
+    /// the numbers are literally the same. Instead, prefer whichever octave
+    /// keeps the melodic line closest to the previously resolved pitch: real
+    /// chanter melodies move mostly by step or small leaps, so a G/A that
+    /// follows an upper-register note (d/e/f) is almost always the high
+    /// octave, and one that follows a lower-register note (lowA/b) is almost
+    /// always the low octave. Confirmed against both real files: this
+    /// recovers plausible smooth melodic runs where the old raw-distance
+    /// tiebreak produced repeated large, un-piping-like leaps.
+    static func nearest(toMIDINumber midi: Int, previous: Pitch? = nil) -> Pitch {
+        let pitchClass = ((midi % 12) + 12) % 12
+        let sameClass = allCases.filter { $0.rawValue % 12 == pitchClass }
+        guard !sameClass.isEmpty else {
+            return allCases.min(by: { abs($0.rawValue - midi) < abs($1.rawValue - midi) }) ?? .lowA
+        }
+        if sameClass.count > 1, let previous {
+            return sameClass.min(by: { abs($0.rawValue - previous.rawValue) < abs($1.rawValue - previous.rawValue) })!
+        }
+        return sameClass.min(by: { abs($0.rawValue - midi) < abs($1.rawValue - midi) })!
     }
 }
 
