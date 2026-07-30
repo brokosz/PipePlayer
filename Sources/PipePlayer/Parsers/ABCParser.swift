@@ -236,6 +236,16 @@ enum ABCParser {
                 note.isTiedToNext = isTied
 
                 if !pendingGraceNotes.isEmpty {
+                    // Grace notes borrow their time from the note they
+                    // decorate (capped at half its duration) rather than
+                    // adding new, un-notated time — otherwise a heavily-
+                    // ornamented tune plays back audibly slower than its
+                    // stated tempo purely from accumulated grace-note
+                    // overhead. Matches EmbellishmentExpander's identical
+                    // borrowing for BWW/BMW's named-token embellishments.
+                    let totalGraceDuration = pendingGraceNotes.reduce(0.0) { $0 + $1.duration }
+                    let borrowed = min(totalGraceDuration, note.duration * 0.5)
+                    note.duration -= borrowed
                     for g in pendingGraceNotes { tokens.append(.note(g)) }
                     pendingGraceNotes.removeAll()
                 }

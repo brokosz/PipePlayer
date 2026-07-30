@@ -33,11 +33,14 @@ struct ABCParserTests {
     @Test func graceNoteGroupInsertsShortLeadingNote() throws {
         let tune = try ABCParser.parse(sample)
         let notes = tune.parts.first?.measures.last?.notes ?? []
-        // "{g}A3" -> a short High G grace note followed by a dotted-length A.
+        // "{g}A3" -> a short High G grace note followed by a 3x-length A,
+        // with the grace's 0.0625 borrowed from that A (1.5 - 0.0625 =
+        // 1.4375) rather than added on top of it — see
+        // `EmbellishmentExpander`'s identical borrowing for BWW/BMW.
         #expect(notes.first?.pitch == .highG)
         #expect((notes.first?.duration ?? 1) < 0.1)
         #expect(notes.dropFirst().first?.pitch == .lowA)
-        #expect(abs((notes.dropFirst().first?.duration ?? 0) - 1.5) < 0.001)
+        #expect(abs((notes.dropFirst().first?.duration ?? 0) - 1.4375) < 0.0001)
     }
 
     @Test func missingKeyFieldThrows() {

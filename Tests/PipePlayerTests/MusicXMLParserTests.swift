@@ -93,7 +93,11 @@ struct MusicXMLParserTests {
         #expect(measure2.map(\.pitch) == [.lowA, .highG, .c])
         #expect(abs(measure2[0].duration - 0.5) < 0.0001)
         #expect(measure2[1].duration < 0.1) // grace note — short, borrowed time
-        #expect(abs(measure2[2].duration - 0.5) < 0.0001)
+        // The C's written duration (0.5) minus the grace's borrowed 0.035 —
+        // matches EmbellishmentExpander's identical borrowing for BWW/BMW,
+        // so a heavily-ornamented MusicXML tune doesn't play back slower
+        // than its stated tempo the way un-borrowed grace time would cause.
+        #expect(abs(measure2[2].duration - 0.465) < 0.0001)
     }
 
     @Test func melodicContourDisambiguatesRepeatedGAndAOctaves() throws {

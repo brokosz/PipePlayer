@@ -201,6 +201,12 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
         // disambiguate G/A's low/high octave by melodic contour — see
         // `Pitch.nearest(toMIDINumber:previous:)`.
         var lastResolvedPitch: Pitch?
+        // Total duration of grace notes seen since the last main note,
+        // borrowed from the next main note's own duration when it arrives —
+        // see the comment in `finishNote()` for why this has to happen here
+        // rather than via `EmbellishmentExpander` (which only sees BWW/ABC's
+        // named-token embellishments, not MusicXML's literal grace notes).
+        var pendingGraceDuration: Double = 0
 
         init(id: String, name: String) {
             self.id = id
@@ -649,6 +655,7 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
             var note = NoteEvent(pitch: .lowA, duration: baseDuration * dotMultiplier * tupletRatio, embellishment: nil, isRest: true)
             note.isTiedToNext = false
             current.currentNotes.append(note)
+            current.pendingGraceDuration = 0
             return
         }
 
@@ -675,10 +682,21 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
             // Grace notes conventionally carry no <duration> at all (they
             // borrow time rather than have their own) — matches
             // EmbellishmentExpander's graceDuration constant for consistency
-            // with how BWW-sourced grace notes are timed.
+            // with how BWW-sourced grace notes are timed. That borrowing
+            // happens below, once the note it decorates actually arrives —
+            // MusicXML grace notes are their own literal `NoteEvent`s (no
+            // `.embellishment` token for `EmbellishmentExpander` to see), so
+            // without this they'd silently add un-notated time to the whole
+            // tune instead of borrowing it, exactly the bug that made a real
+            // heavily-ornamented tune play audibly slower than its stated
+            // tempo despite the tempo number itself being correct.
             duration = 0.035
+            current.pendingGraceDuration += duration
         } else {
-            duration = baseDuration * dotMultiplier * tupletRatio
+            let written = baseDuration * dotMultiplier * tupletRatio
+            let borrowed = min(current.pendingGraceDuration, written * 0.5)
+            duration = written - borrowed
+            current.pendingGraceDuration = 0
         }
 
         var note = NoteEvent(pitch: pitch, duration: duration, embellishment: nil)

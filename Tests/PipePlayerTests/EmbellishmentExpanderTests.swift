@@ -17,6 +17,11 @@ struct EmbellishmentExpanderTests {
 
     @Test func gracenoteExpandsToGraceThenMainNote() {
         // "gg" = single G (High G) grace note, per BWWEmbellishmentTable.
+        // The main note's duration shrinks by the grace's borrowed time
+        // (0.5 - 0.035 = 0.465) rather than keeping its full written value —
+        // grace notes borrow time from the note they decorate so the whole
+        // tune's real duration matches its stated tempo, instead of quietly
+        // running long by however much ornamentation it has.
         let note = NoteEvent(pitch: .d, duration: 0.5, embellishment: .token("gg"))
         let result = EmbellishmentExpander.expand(note)
         #expect(result.count == 2)
@@ -24,24 +29,36 @@ struct EmbellishmentExpanderTests {
         #expect(result[0].duration == EmbellishmentExpander.graceDuration)
         #expect(result[0].embellishment == nil)
         #expect(result[1].pitch == .d)
-        #expect(abs(result[1].duration - 0.5) < 0.0001)
+        #expect(abs(result[1].duration - 0.465) < 0.0001)
         #expect(result[1].embellishment == nil)
     }
 
     @Test func throwOnDUsesExactTableGraceSequence() {
-        // thrd = "gdc" -> Low G, D, C grace notes, then the main note.
+        // thrd = "gdc" -> Low G, D, C grace notes (3 * 0.035 = 0.105
+        // borrowed), then the main note at 0.75 - 0.105 = 0.645.
         let note = NoteEvent(pitch: .d, duration: 0.75, embellishment: .token("thrd"))
         let result = EmbellishmentExpander.expand(note)
         #expect(result.map(\.pitch) == [.lowG, .d, .c, .d])
-        #expect(abs((result.last?.duration ?? 0) - 0.75) < 0.0001)
+        #expect(abs((result.last?.duration ?? 0) - 0.645) < 0.0001)
     }
 
     @Test func doublingOnBUsesExactTableGraceSequence() {
-        // dbb = "Gbd" -> High G, B, D grace notes, then the main note unchanged.
+        // dbb = "Gbd" -> High G, B, D grace notes (3 * 0.035 = 0.105
+        // borrowed), then the main note at 0.5 - 0.105 = 0.395.
         let note = NoteEvent(pitch: .b, duration: 0.5, embellishment: .token("dbb"))
         let result = EmbellishmentExpander.expand(note)
         #expect(result.map(\.pitch) == [.highG, .b, .d, .b])
-        #expect(abs((result.last?.duration ?? 0) - 0.5) < 0.0001)
+        #expect(abs((result.last?.duration ?? 0) - 0.395) < 0.0001)
+    }
+
+    @Test func borrowingIsCappedAtHalfTheMainNoteSoItNeverVanishes() {
+        // A very short main note (0.1 beat) under grp's 3-grace-note ornament
+        // (3 * 0.035 = 0.105 borrowed) would go negative if borrowing were
+        // uncapped — capped at half the note's own duration (0.05) instead,
+        // so the main note is always still audible as a distinct note.
+        let note = NoteEvent(pitch: .b, duration: 0.1, embellishment: .token("grp"))
+        let result = EmbellishmentExpander.expand(note)
+        #expect(abs((result.last?.duration ?? 0) - 0.05) < 0.0001)
     }
 
     @Test func taorluathUsesExactTableGraceSequence() {

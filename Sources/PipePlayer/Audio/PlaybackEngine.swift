@@ -539,5 +539,22 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         guard state == .playing, let anchor = playbackAnchorWallClock else { return }
         let elapsed = playbackAnchorOffset + Date().timeIntervalSince(anchor)
         currentTime = min(elapsed, duration)
+        // Self-healing check, piggybacked on this existing 30Hz timer rather
+        // than adding a second one: several paths silence every active note
+        // (seek, rebuildEvents on a mid-playback tempo/mute change) and only
+        // some of them explicitly restart the drone afterward. Rather than
+        // audit every current and future silencing call site, just verify
+        // on every tick that an enabled drone is actually sounding, and
+        // restart it if not.
+        if isDroneEnabled, !isDroneCurrentlyPlaying {
+            startDrone()
+        }
+    }
+
+    private var isDroneCurrentlyPlaying: Bool {
+        noteCountLock.lock()
+        defer { noteCountLock.unlock() }
+        let key = NoteKey(channel: Self.droneMIDIChannel, note: Self.droneMIDINote)
+        return (activeNoteCounts[key] ?? 0) > 0
     }
 }
