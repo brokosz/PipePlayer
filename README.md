@@ -152,8 +152,7 @@ paths, stored via `UserDefaults`) so File → Open Recent works across launches.
   [tomvodi/limepipes-plugin-bww](https://github.com/tomvodi/limepipes-plugin-bww)
   (MIT licensed), a real working open-source parser for this format.
 - The embellishment-to-grace-note-sequence table was transcribed from
-  [Ensemble](https://thisisensemble.com)'s own `editor.js` — its internal,
-  ground-truth vocabulary for the same ornament tokens — rather than
+  [Ensemble](https://thisisensemble.com)'s own embellishment palettes rather than
   approximated from written tutor descriptions.
 
 ## License
