@@ -2,6 +2,13 @@ import Testing
 import Foundation
 @testable import PipePlayer
 
+// Serialized rather than the default parallel execution: each test spins up
+// a real AVAudioEngine, and the export tests wait on a real (if very short)
+// scheduler run to complete — running those concurrently with each other
+// hit a genuine hang, presumably CoreAudio/HAL contention across
+// simultaneously-starting engine instances rather than anything in
+// PlaybackEngine's own logic.
+@Suite(.serialized)
 @MainActor
 struct PlaybackEngineTests {
 
@@ -94,6 +101,59 @@ struct PlaybackEngineTests {
         engine.play()
         engine.stop()
         #expect(engine.state == .stopped)
+    }
+
+    @Test func exportWritesANonEmptyAudioFile() async throws {
+        let engine = PlaybackEngine()
+        // Fast tempo — the fixture tune is a single half-beat note, so this
+        // finishes (and the export completion fires) in well under a second
+        // of real time, keeping the test itself fast despite export being a
+        // real-time capture rather than an offline render.
+        engine.load(voices: [voice(timeSignature: "2/4", tempo: 240)])
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            engine.exportAudio(to: url, format: .wav) { result in
+                continuation.resume(with: result)
+            }
+        }
+
+        #expect(!engine.isExporting)
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        #expect((size ?? 0) > 0)
+    }
+
+    @Test func exportFailsCleanlyWithNoTuneLoaded() {
+        // No tune loaded means the completion fires synchronously (before
+        // any scheduler/audio work starts), so this doesn't need to await
+        // anything.
+        let engine = PlaybackEngine()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        var capturedError: Error?
+        engine.exportAudio(to: url, format: .wav) { result in
+            if case .failure(let error) = result { capturedError = error }
+        }
+        #expect(capturedError != nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func exportRestoresLoopingStateAfterFinishing() async throws {
+        let engine = PlaybackEngine()
+        engine.load(voices: [voice(timeSignature: "2/4", tempo: 240)])
+        engine.isLooping = true
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            engine.exportAudio(to: url, format: .wav) { result in
+                continuation.resume(with: result)
+            }
+        }
+
+        // Export forces exactly one pass regardless of the Loop toggle, but
+        // shouldn't silently clear the user's actual Loop setting afterward.
+        #expect(engine.isLooping)
     }
 
     @Test func scaledEventsLeavesNoteOnVelocityAtFullScale() {

@@ -44,6 +44,13 @@ transport controls and a choice of sound sources.
 - MIDI output via a virtual CoreMIDI port ("PipePlayer"), so the same tune
   can drive an external synth, DAW, or hardware module — independent of
   whether local audio is also playing
+- Export to WAV, AAC (`.m4a`), or MP4 (AAC audio) using exactly the
+  instrument/SoundFont/AU, volume, drone, muted voices, and tempo already set
+  for on-screen playback. Rendered offline (not a real-time recording), so a
+  multi-minute tune exports in a couple seconds and nothing is audible while
+  it runs. MP3 isn't offered — Apple's frameworks can only decode MP3, never
+  encode it, and adding a real encoder would mean bundling a third-party
+  library, the one dependency this project has avoided everywhere else
 - File menu with Open, Open Recent, and Close Tune; drag-and-drop also
   supported
 

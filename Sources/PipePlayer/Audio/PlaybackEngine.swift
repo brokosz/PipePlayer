@@ -40,6 +40,11 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     @Published private(set) var state: PlaybackState = .stopped
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
+    /// True for exactly one real-time playthrough while `exportAudio` is
+    /// recording — the UI disables transport controls during this, since
+    /// seeking/pausing/muting mid-export would corrupt the recorded file.
+    @Published private(set) var isExporting = false
+    @Published private(set) var exportProgress: Double = 0
     @Published var tempo: Double = 90 {
         didSet { rebuildEvents(preservingPosition: true) }
     }
@@ -109,6 +114,7 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     private var uiTickTimer: Timer?
     private var playbackAnchorWallClock: Date?
     private var playbackAnchorOffset: TimeInterval = 0
+    private var exportCancelRequested = false
     private lazy var dlsSoundBankPath: String? = {
         let candidatePaths = [
             "/System/Library/Components/CoreAudio.component/Contents/Resources/gs_instruments.dls",
@@ -556,5 +562,274 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         defer { noteCountLock.unlock() }
         let key = NoteKey(channel: Self.droneMIDIChannel, note: Self.droneMIDINote)
         return (activeNoteCounts[key] ?? 0) > 0
+    }
+
+    // MARK: - Export
+
+    /// Renders the current tune to an audio file using exactly the sound
+    /// settings already in effect for on-screen playback — same instrument/
+    /// SoundFont/AU, volume, drone, muted voices, and tempo, all read live
+    /// off the existing audio graph rather than duplicated/re-derived.
+    ///
+    /// This is an *offline* render, not a real-time capture: `AVAudioEngine`
+    /// is switched into manual-rendering mode, so the same sampler/AU
+    /// synthesizes the same performance (every note still gets its correct
+    /// real duration/timing) but as fast as the CPU can compute it rather
+    /// than throttled to real wall-clock time — a multi-minute tune reduces
+    /// to a couple seconds of actual work — and, since manual rendering
+    /// pulls into an in-memory buffer this method controls directly rather
+    /// than driving real hardware output, nothing is audible while it runs.
+    /// (An earlier version played the tune through speakers in real time
+    /// with a recording tap on `mainMixerNode` — correct, but exported at
+    /// 1x real time and was audible the whole way through.)
+    ///
+    /// Always exports exactly one pass regardless of the Loop toggle — that
+    /// only matters for the tap/scheduler-driven live-playback path, not
+    /// this one, since it walks a single fixed `events` timeline once.
+    func exportAudio(
+        to url: URL,
+        format: AudioExportFormat,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard !isExporting else {
+            completion(.failure(AudioExportError.alreadyExporting))
+            return
+        }
+        guard !events.isEmpty else {
+            completion(.failure(AudioExportError.noTuneLoaded))
+            return
+        }
+
+        // Export and live playback can't run at once — manual rendering
+        // mode takes over the whole engine's clock. stop() first so there's
+        // no in-flight live playback (scheduler thread, drone note) still
+        // trying to drive the same graph underneath the offline render.
+        stop()
+
+        let wasEngineRunning = engine.isRunning
+        let renderFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+        let instrument = activeInstrument
+        let totalDuration = duration
+        let sampleRate = renderFormat.sampleRate
+        let totalFrames = AVAudioFramePosition((totalDuration * sampleRate).rounded(.up))
+
+        // The drone is never part of `events` — it's a continuously-held
+        // note toggled live by play()/isDroneEnabled, not a scheduled event
+        // — so it needs to be synthesized into this offline pass separately,
+        // spanning the whole render, to match what live playback would
+        // actually sound like with the drone on.
+        var timeline = events
+        if isDroneEnabled {
+            timeline.append(ScheduledMIDIEvent(time: 0, kind: .noteOn, note: Self.droneMIDINote, velocity: Self.droneVelocity, channel: Self.droneMIDIChannel))
+            timeline.append(ScheduledMIDIEvent(time: totalDuration, kind: .noteOff, note: Self.droneMIDINote, velocity: 0, channel: Self.droneMIDIChannel))
+        }
+        timeline.sort { $0.time < $1.time }
+
+        let fileSettings: [String: Any]
+        switch format {
+        case .wav:
+            fileSettings = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: sampleRate,
+                AVNumberOfChannelsKey: renderFormat.channelCount,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false
+            ]
+        case .aac, .mp4:
+            fileSettings = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: sampleRate,
+                AVNumberOfChannelsKey: renderFormat.channelCount,
+                AVEncoderBitRateKey: 192_000
+            ]
+        }
+
+        let outputFile: AVAudioFile
+        do {
+            outputFile = try AVAudioFile(forWriting: url, settings: fileSettings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        } catch {
+            completion(.failure(AudioExportError.couldNotCreateFile(error)))
+            return
+        }
+
+        exportCancelRequested = false
+        isExporting = true
+        exportProgress = 0
+
+        // Boxed for the same reason as elsewhere in this class (see
+        // `UncheckedSendableBox`'s doc comment): both are provably fine to
+        // hand across this queue hop — `finalTimeline` is never touched
+        // again after this point, and `completion` is only ever invoked
+        // once, from the `DispatchQueue.main.async` below — just not
+        // something the compiler can verify.
+        let finalTimeline = timeline
+        let boxedCompletion = UncheckedSendableBox(completion)
+
+        // The render loop is a tight, synchronous pull — off the main
+        // thread so a long tune's worth of computation (even at many times
+        // real speed) doesn't freeze the UI. The engine/instrument are only
+        // ever touched here or from other transport methods, and those are
+        // all disabled in the UI (`.disabled(engine.isExporting)`) for the
+        // duration, so this doesn't race live playback in practice, even
+        // though the compiler can't verify that (see the class-level
+        // `@unchecked Sendable` note).
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result = self.renderOffline(
+                timeline: finalTimeline,
+                totalFrames: totalFrames,
+                renderFormat: renderFormat,
+                instrument: instrument,
+                outputFile: outputFile,
+                wasEngineRunning: wasEngineRunning
+            )
+            DispatchQueue.main.async {
+                self.isExporting = false
+                self.exportProgress = 0
+                boxedCompletion.value(result)
+            }
+        }
+    }
+
+    /// Requests cancellation of an export in progress — checked once per
+    /// render chunk (many times a second, given offline rendering's speed),
+    /// so this takes effect almost immediately. The partial file is left on
+    /// disk rather than deleted; a partial-but-valid WAV/AAC of however much
+    /// got through might still be useful, and silently deleting a file the
+    /// user can see in Finder would be more surprising than helpful.
+    func cancelExport() {
+        guard isExporting else { return }
+        exportCancelRequested = true
+    }
+
+    /// Runs entirely off the main thread/actor — everything it touches
+    /// (`engine`, `instrument`, `outputFile`) is either a value captured
+    /// before dispatching here or an object not otherwise in use for the
+    /// duration (see `exportAudio`'s note on why that's safe by
+    /// construction here despite not being statically checked).
+    private func renderOffline(
+        timeline: [ScheduledMIDIEvent],
+        totalFrames: AVAudioFramePosition,
+        renderFormat: AVAudioFormat,
+        instrument: AVAudioUnitMIDIInstrument,
+        outputFile: AVAudioFile,
+        wasEngineRunning: Bool
+    ) -> Result<Void, Error> {
+        engine.stop()
+        let maxFrames: AVAudioFrameCount = 4096
+        do {
+            try engine.enableManualRenderingMode(.offline, format: renderFormat, maximumFrameCount: maxFrames)
+            try engine.start()
+        } catch {
+            engine.disableManualRenderingMode()
+            if wasEngineRunning { try? engine.start() }
+            return .failure(AudioExportError.renderSetupFailed(error))
+        }
+
+        // The stop()/enableManualRenderingMode()/start() cycle above
+        // reconfigures the underlying Audio Unit for the new (offline)
+        // render context, and `AVAudioUnitSampler` doesn't carry its
+        // previously loaded SoundFont/program through that — confirmed
+        // directly: without this, export fell back to some default generic
+        // patch instead of the actual bagpipe timbre heard during live
+        // playback. Not needed for a hosted third-party AU (`hostedInstrument`)
+        // — there's no equivalent "reload the current patch" call available
+        // for an arbitrary plugin, and this hasn't been reported as an issue
+        // for that path.
+        if instrument === sampler {
+            loadInstrument(program: instrumentProgram)
+        }
+
+        defer {
+            for channel: UInt8 in 0...15 {
+                for note: UInt8 in 0...127 { instrument.stopNote(note, onChannel: channel) }
+            }
+            engine.stop()
+            engine.disableManualRenderingMode()
+            if wasEngineRunning {
+                do { try engine.start() } catch {
+                    print("PipePlayer: audio engine failed to restart after export (\(error)).")
+                }
+            }
+        }
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: renderFormat, frameCapacity: maxFrames) else {
+            return .failure(AudioExportError.renderFailed("couldn't allocate a render buffer"))
+        }
+
+        var eventIndex = 0
+        var renderedFrames: AVAudioFramePosition = 0
+        let sampleRate = renderFormat.sampleRate
+
+        while renderedFrames < totalFrames {
+            if exportCancelRequested { return .failure(AudioExportError.cancelled) }
+
+            let framesRemaining = totalFrames - renderedFrames
+            let framesThisPass = AVAudioFrameCount(min(UInt64(maxFrames), UInt64(framesRemaining)))
+            let chunkEndTime = Double(renderedFrames + AVAudioFramePosition(framesThisPass)) / sampleRate
+
+            // Fire every event due by the end of this chunk before rendering
+            // it — a ~4096-frame chunk is well under 100ms at typical sample
+            // rates, comfortably tighter than a note's audible attack, so
+            // this reads as sample-accurate rather than actually needing to
+            // place a note mid-buffer.
+            while eventIndex < timeline.count, timeline[eventIndex].time < chunkEndTime {
+                let event = timeline[eventIndex]
+                switch event.kind {
+                case .noteOn:
+                    instrument.startNote(event.note, withVelocity: event.velocity, onChannel: event.channel)
+                case .noteOff:
+                    instrument.stopNote(event.note, onChannel: event.channel)
+                }
+                eventIndex += 1
+            }
+
+            buffer.frameLength = framesThisPass
+            do {
+                let status = try engine.renderOffline(framesThisPass, to: buffer)
+                guard status == .success else {
+                    return .failure(AudioExportError.renderFailed("render status \(status)"))
+                }
+                try outputFile.write(from: buffer)
+            } catch {
+                return .failure(AudioExportError.writeFailed(error))
+            }
+
+            renderedFrames += AVAudioFramePosition(framesThisPass)
+            let progress = totalFrames > 0 ? Double(renderedFrames) / Double(totalFrames) : 1.0
+            DispatchQueue.main.async { self.exportProgress = progress }
+        }
+
+        return .success(())
+    }
+}
+
+enum AudioExportError: Error, LocalizedError {
+    case noTuneLoaded
+    case alreadyExporting
+    case cancelled
+    case couldNotCreateFile(Error)
+    case renderSetupFailed(Error)
+    case renderFailed(String)
+    case writeFailed(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .noTuneLoaded:
+            return "No tune is loaded to export."
+        case .alreadyExporting:
+            return "An export is already in progress."
+        case .cancelled:
+            return "Export cancelled."
+        case .couldNotCreateFile(let error):
+            return "Couldn't create the export file: \(error.localizedDescription)"
+        case .renderSetupFailed(let error):
+            return "Couldn't set up offline rendering: \(error.localizedDescription)"
+        case .renderFailed(let reason):
+            return "Rendering failed: \(reason)"
+        case .writeFailed(let error):
+            return "Writing the export file failed: \(error.localizedDescription)"
+        }
     }
 }

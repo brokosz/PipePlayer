@@ -15,9 +15,14 @@ struct TransportControlsView: View {
     @State private var scrubberValue: TimeInterval = 0
     @FocusState private var isTempoFieldFocused: Bool
     @State private var tempoDraftText: String = ""
+    @State private var exportErrorMessage: String?
 
     var body: some View {
         VStack(spacing: 12) {
+            if engine.isExporting {
+                exportStatusBar
+            }
+
             scrubber
 
             HStack(spacing: 20) {
@@ -46,6 +51,19 @@ struct TransportControlsView: View {
 
                 Spacer()
 
+                Menu {
+                    ForEach(AudioExportFormat.allCases) { format in
+                        Button(format.displayName) {
+                            presentExportPanel(format: format)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Export this tune to an audio file, using the current instrument/volume/drone/tempo settings")
+
                 Toggle(isOn: $engine.isMIDIOutputEnabled) {
                     Label("MIDI Out", systemImage: "pianokeys")
                 }
@@ -55,7 +73,9 @@ struct TransportControlsView: View {
                       ? "Send this tune out the \"PipePlayer\" virtual MIDI port"
                       : "Virtual MIDI port unavailable")
             }
+            .disabled(engine.isExporting)
 
+            Group {
             LabeledContent("Tempo") {
                 HStack(spacing: 6) {
                     TextField("Tempo", text: $tempoDraftText)
@@ -148,9 +168,22 @@ struct TransportControlsView: View {
                     }
                 }
             }
+            }
+            .disabled(engine.isExporting)
         }
         .onAppear {
             availableAudioUnits = AudioUnitCatalog.availableInstruments()
+        }
+        .alert(
+            "Export failed",
+            isPresented: Binding(
+                get: { exportErrorMessage != nil },
+                set: { if !$0 { exportErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { exportErrorMessage = nil }
+        } message: {
+            Text(exportErrorMessage ?? "")
         }
     }
 
@@ -164,6 +197,30 @@ struct TransportControlsView: View {
             controller.showWindow(nil)
             controller.window?.makeKeyAndOrderFront(nil)
             pluginWindowController = controller
+        }
+    }
+
+    private var exportStatusBar: some View {
+        HStack(spacing: 10) {
+            ProgressView(value: engine.exportProgress)
+            Text("Exporting…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("Cancel") { engine.cancelExport() }
+                .font(.caption)
+        }
+    }
+
+    private func presentExportPanel(format: AudioExportFormat) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [format.contentType]
+        panel.nameFieldStringValue = (engine.voices.first?.tune.title ?? "Export") + "." + format.fileExtension
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        engine.exportAudio(to: url, format: format) { result in
+            if case .failure(let error) = result {
+                exportErrorMessage = error.localizedDescription
+            }
         }
     }
 
