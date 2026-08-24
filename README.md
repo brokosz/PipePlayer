@@ -1,166 +1,84 @@
 # PipePlayer
 
-A simple macOS app for playing back Great Highland Bagpipe tune files —
-`.abc`, `.bww`, `.bmw`, `.musicxml`/`.xml`, and `.mxl` — with standard
-transport controls and a choice of sound sources.
+A free Mac app that plays your bagpipe tune files out loud — no pipes, no
+practice chanter, no other app required.
 
-## Features
+If you've got tunes saved from **Bagpipe Music Writer**, **Bagpipe
+Musicworks Gold**, **Bagpipe Reader**, **Ensemble**, or any notation program
+that can export **MusicXML**, PipePlayer opens them and plays them back with
+real grace notes, doublings, throws, and the rest of Highland piping's
+ornamentation — not a flattened, robotic version of the tune.
 
-- Parses ABC notation, the BWW/BMW "tune code" text format shared by
-  Bagpipe Music Writer, Bagpipe Musicworks Gold, and Bagpipe Reader, and
-  MusicXML (plain `.musicxml`/`.xml` or compressed `.mxl`)
-- MusicXML files with multiple `<part>`s (a harmony arrangement — melody plus
-  harmony voices meant to sound together) play all of them back
-  simultaneously, with one mute checkbox per voice so you can solo or drop
-  any of them
-- Full grace-note/embellishment expansion (doublings, throws, grips,
-  taorluath, birl, strikes, crunluath, and the wider piobaireachd vocabulary)
-  using ground-truth grace-note sequences, not approximated ones — grace
-  notes borrow their time from the note they decorate rather than adding new,
-  un-notated time, so a heavily-ornamented tune still plays at its stated
-  tempo
-- Multiple tunes can be open at once as native macOS window tabs, each with
-  fully independent playback state — switching tabs never interrupts
-  whichever one is playing, but starting playback in a different tab stops
-  it, so only one tune is ever audibly playing at a time. The currently
-  playing tab's title shows a 🔊 next to the tune name
-- Transport controls: play/pause/stop, seek, tempo (numeric field + stepper,
-  20–248bpm), volume, loop, and an optional continuous drone (needs a
-  soundfont with a drone sample)
-- Click a segment of the part-progress bar to jump straight to that part's
-  start
-- Tune type (march, strathspey, reel, hornpipe, jig) drives a sensible
-  default tempo when a file doesn't specify one itself; slow airs and
-  laments are recognized separately and exempted from the compound-time
-  "beat = dotted quarter" scaling dance tunes need, so a 6/8 air doesn't play
-  back inflated
-- Three interchangeable sound sources:
-  - Apple's built-in General MIDI bank (all 128 instruments, not just
-    Bagpipe)
-  - Any user-supplied SoundFont (`.sf2`) or DLS file
-  - Any installed Audio Unit instrument (MainStage patches, Kontakt, or any
-    other Music Device AU registered on the system), including its own
-    plugin UI for browsing patches
-- MIDI output via a virtual CoreMIDI port ("PipePlayer"), so the same tune
-  can drive an external synth, DAW, or hardware module — independent of
-  whether local audio is also playing
-- Export to WAV, AAC (`.m4a`), or MP4 (AAC audio) using exactly the
-  instrument/SoundFont/AU, volume, drone, muted voices, and tempo already set
-  for on-screen playback. Rendered offline (not a real-time recording), so a
-  multi-minute tune exports in a couple seconds and nothing is audible while
-  it runs. MP3 isn't offered — Apple's frameworks can only decode MP3, never
-  encode it, and adding a real encoder would mean bundling a third-party
-  library, the one dependency this project has avoided everywhere else
-- File menu with Open, Open Recent, and Close Tune; drag-and-drop also
-  supported
+## Why
 
-## Requirements
+Tune collections pile up as files — `.bww`, `.bmw`, `.abc`, `.musicxml` — and
+most of them are silent until you sit down with pipes or a chanter and work
+them out. PipePlayer just plays them, so you can hear a tune before you
+learn it, check a transcription for mistakes, or send someone a recording
+without picking up an instrument.
 
-- macOS 13 or later
-- Swift 5.10+ toolchain (Xcode or standalone Command Line Tools both work —
-  Xcode is not required to build or run this)
+## What it does
 
-## Building & running
+- **Opens ABC, BWW/BMW, and MusicXML tune files** (`.abc`, `.bww`, `.bmw`,
+  `.musicxml`, `.xml`, `.mxl`) — the common formats Highland piping software
+  actually saves in
+- **Plays the ornamentation properly.** Doublings, throws, grips,
+  taorluath, birl, strikes, crunluath — the grace notes that make a tune
+  sound like piping and not a music box — are expanded from a real
+  reference table, not guessed at
+- **Multiple tunes open at once**, each in its own tab, each independent —
+  switch between them freely, and starting one stops whichever other tab
+  was playing, so you're never listening to two at once by accident
+- **A real transport**: play, pause, seek, adjustable tempo and volume,
+  looping, and an optional continuous drone underneath the melody
+- **Harmony arrangements** (a MusicXML file with a melody and one or more
+  harmony parts) play together, with a mute checkbox per part so you can
+  solo or drop any of them
+- **Export to an audio file** (WAV, AAC, or MP4) using whatever instrument
+  and settings you've got dialed in — share a tune as a real audio file, no
+  screen recording required
+- **Choose the sound**: Apple's built-in instrument bank, any SoundFont file
+  you supply, or any other virtual instrument installed on your Mac
+- **Send MIDI to another app** — PipePlayer can act as a MIDI source for a
+  DAW, notation program, or hardware synth, playing along in exact sync
 
-```bash
-swift build              # debug build
-swift test                # run the parser/expander unit tests
-swift run PipePlayer       # run directly from Terminal
-```
+## Getting it
 
-For a real double-clickable `.app` (proper bundle, icon slot, Gatekeeper-safe
-ad-hoc signature) rather than a bare executable:
+Download the latest build from the
+[Releases page](https://github.com/brokosz/PipePlayer/releases/latest) and
+drag `PipePlayer.app` into your Applications folder.
 
-```bash
-./package_app.sh
-```
+Since this isn't distributed through the Mac App Store, the first time you
+open it macOS will warn you it's from an unidentified developer. Right-click
+(or Control-click) the app and choose **Open** — you'll only need to do this
+once.
 
-This builds a release binary and produces `dist/PipePlayer.app`. Copy it to
-`/Applications` or `~/Applications` and launch normally. Re-run the script
-any time after changing the code to refresh the bundle.
+## Using it
 
-## CI & releases
+Open a tune file (**File → Open…**, or just drag it onto the window) and
+press play. From there:
 
-Every push and PR to `main` runs `swift build` + `swift test` on macOS via
-[GitHub Actions](.github/workflows/ci.yml).
+- The bar across the top shows each part of the tune and highlights where
+  you are — click any part to jump straight to it
+- Drag the tempo, volume, and other controls to taste; none of it affects
+  the file itself, just how it plays back
+- Open another tune in a new tab (**File → New Window**) to compare two
+  arrangements, or queue up a set
+- When it sounds the way you want, use the export button (⬆) to save it as
+  an audio file
 
-To cut a release: push a tag matching `v*` (e.g. `git tag v1.1.0 && git push
-origin v1.1.0`). [The release workflow](.github/workflows/release.yml) builds
-`PipePlayer.app`, zips it, and publishes it to the repo's Releases page with
-that version baked into the bundle's `CFBundleVersion`. It can also be run
-manually (without a tag) via the Actions tab's "Run workflow" button, which
-uploads the build as a workflow artifact instead of a release.
+## Privacy
 
-Released builds are ad-hoc signed, not notarized (no paid Apple Developer
-account behind this project) — Gatekeeper will flag a fresh download the
-first time it's opened. Right-click the app → Open once to get past that;
-subsequent launches are normal.
+PipePlayer doesn't collect or send anything anywhere. It reads the file you
+open and plays it through your Mac's speakers — that's it. No account, no
+analytics, no network access. The only thing it remembers between launches
+is your recent-files list, kept entirely on your own machine.
 
-## Data & privacy
+## For developers
 
-PipePlayer does not collect, transmit, or store any data anywhere. It only
-reads the tune file you explicitly open (or drag onto the window) and plays
-it locally through your Mac's audio output and/or the CoreMIDI system. There
-is no network access, no analytics, no account, and nothing leaves your
-machine. The only persisted state is a local "recent files" list (just file
-paths, stored via `UserDefaults`) so File → Open Recent works across launches.
-
-## Format notes
-
-- `.bmw` files are supported wherever they use the same plain-text "tune
-  code" grammar as `.bww` (true of essentially all Bagpipe Music Writer
-  Gold-era exports, including several observed older/plainer header
-  variants). Pre-Gold BMW-DOS binary files are a different, largely
-  undocumented format and are explicitly rejected with a clear error rather
-  than silently mis-parsed.
-- Ornament/embellishment coverage is exact for the common ones (doublings,
-  throws, grips, birls, taorluath, crunluath, strikes, single grace notes,
-  and most of the piobaireachd vocabulary). A handful of very rare/regional
-  tokens fall back to a single conservative grace note rather than a fully
-  authoritative figure — the tune still loads and plays, just with a less
-  precise ornament in that one spot.
-- `TuneTempo`/ABC's `Q:` are read at the meter's own natural tempo-marking
-  beat unit, same as standard notation everywhere: quarter note for simple
-  time (2/4, 3/4, 4/4 — read flat, unscaled), half note for cut time (2/2,
-  ×2), and the dotted quarter for compound time (6/8, 9/8, 12/8, ×1.5) —
-  confirmed directly against a real cut-time reel and a real jig, both of
-  which otherwise dragged well under their intended speed. The tempo field in
-  the transport controls always shows the number as written in the file
-  (e.g. 132 for a jig), even though actual playback runs at the scaled-up
-  equivalent (198) — only BWW/BMW/ABC need this; MusicXML's `<sound tempo>`
-  is always flat quarter-note bpm by spec regardless of written meter. Slow
-  airs, laments, and songs (from BWW's "Y" record or ABC's `R:` field) are
-  exempted from the compound-time ×1.5/×3 scaling — that convention is for
-  danced-to compound tunes and doesn't apply to a free, rubato air just
-  because it happens to be written in 6/8. When no tempo is stated at all,
-  the tune type (march, strathspey, reel, hornpipe, jig) picks a sensible
-  default instead of a single flat number for every dance.
-- ABC and BWW/BMW are single-voice only — the grammar itself has no notion of
-  multiple simultaneous parts, so every file loads as one "Melody" voice.
-  Multi-voice simultaneous playback (see below) is a MusicXML-only feature.
-- MusicXML support reads every `<part>` as its own simultaneous voice (see
-  above), each independently mutable. `<chord>`-tagged notes (extra pitches
-  stacked on a single note within one part) are still skipped — that's a
-  different mechanism from multiple parts and isn't something this app plays
-  back. Grace notes are read as literal pitches, same as ABC; MusicXML has no
-  equivalent of BWW's named ornament tokens. `.mxl` archives are unpacked via
-  the system `unzip` tool rather than a bundled ZIP library. Each voice's
-  progress (repeats, section boundaries) is tracked independently from its
-  own barline markup, so if a source file's voices aren't perfectly
-  consistent about where sections start and end, voices can drift apart by a
-  second or two over a long tune rather than staying sample-locked — a real
-  but minor limitation, not something this app tries to force into sync by
-  overriding one voice's timing with another's.
-
-## Credits
-
-- BWW/BMW grammar details (pitch letters, duration codes, dot markers, tie
-  tokens, barline/repeat semantics) were cross-checked against
-  [tomvodi/limepipes-plugin-bww](https://github.com/tomvodi/limepipes-plugin-bww)
-  (MIT licensed), a real working open-source parser for this format.
-- The embellishment-to-grace-note-sequence table was transcribed from
-  [Ensemble](https://thisisensemble.com)'s own embellishment palettes rather than
-  approximated from written tutor descriptions.
+Building from source, the parser/playback internals, and notes on how
+specific file-format quirks are handled all live in
+[DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## License
 
