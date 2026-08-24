@@ -765,16 +765,47 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         while renderedFrames < totalFrames {
             if exportCancelRequested { return .failure(AudioExportError.cancelled) }
 
-            let framesRemaining = totalFrames - renderedFrames
-            let framesThisPass = AVAudioFrameCount(min(UInt64(maxFrames), UInt64(framesRemaining)))
-            let chunkEndTime = Double(renderedFrames + AVAudioFramePosition(framesThisPass)) / sampleRate
+            // Bound this render chunk by whichever comes first: the buffer's
+            // own max size, or the next event's exact frame position. A
+            // fixed-size chunk here (the original approach) let several
+            // complete grace notes — real ones run as short as ~23ms, well
+            // under a ~85ms/4096-frame chunk at typical sample rates — fire
+            // their entire note-on *and* note-off before a single frame
+            // ever rendered, stacking that many notes' onsets on top of
+            // whatever note started the chunk instead of playing in
+            // sequence. Summed together at full velocity, that's exactly
+            // what surfaced as clipping in a real export of a fast,
+            // heavily-ornamented tune. Bounding every chunk at the next
+            // event keeps each note-on/off pair on opposite sides of an
+            // actual render call, however short the note.
+            let nextEventFrame: AVAudioFramePosition = {
+                guard eventIndex < timeline.count else { return totalFrames }
+                let frame = AVAudioFramePosition((timeline[eventIndex].time * sampleRate).rounded())
+                return min(max(frame, renderedFrames), totalFrames)
+            }()
+            let chunkEnd = min(renderedFrames + AVAudioFramePosition(maxFrames), nextEventFrame)
+            let framesThisPass = AVAudioFrameCount(chunkEnd - renderedFrames)
 
-            // Fire every event due by the end of this chunk before rendering
-            // it — a ~4096-frame chunk is well under 100ms at typical sample
-            // rates, comfortably tighter than a note's audible attack, so
-            // this reads as sample-accurate rather than actually needing to
-            // place a note mid-buffer.
-            while eventIndex < timeline.count, timeline[eventIndex].time < chunkEndTime {
+            if framesThisPass > 0 {
+                buffer.frameLength = framesThisPass
+                do {
+                    let status = try engine.renderOffline(framesThisPass, to: buffer)
+                    guard status == .success else {
+                        return .failure(AudioExportError.renderFailed("render status \(status)"))
+                    }
+                    try outputFile.write(from: buffer)
+                } catch {
+                    return .failure(AudioExportError.writeFailed(error))
+                }
+                renderedFrames = chunkEnd
+            }
+
+            // Now that every frame up to this point has actually been
+            // rendered, fire every event exactly due at this frame position
+            // (there can be several at once — e.g. a multi-note grace
+            // cluster) before moving on to the next chunk.
+            while eventIndex < timeline.count,
+                  AVAudioFramePosition((timeline[eventIndex].time * sampleRate).rounded()) <= renderedFrames {
                 let event = timeline[eventIndex]
                 switch event.kind {
                 case .noteOn:
@@ -785,18 +816,6 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
                 eventIndex += 1
             }
 
-            buffer.frameLength = framesThisPass
-            do {
-                let status = try engine.renderOffline(framesThisPass, to: buffer)
-                guard status == .success else {
-                    return .failure(AudioExportError.renderFailed("render status \(status)"))
-                }
-                try outputFile.write(from: buffer)
-            } catch {
-                return .failure(AudioExportError.writeFailed(error))
-            }
-
-            renderedFrames += AVAudioFramePosition(framesThisPass)
             let progress = totalFrames > 0 ? Double(renderedFrames) / Double(totalFrames) : 1.0
             DispatchQueue.main.async { self.exportProgress = progress }
         }
