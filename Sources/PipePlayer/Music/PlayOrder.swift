@@ -53,6 +53,25 @@ enum PlayOrder {
         var start: TimeInterval { passes.first?.lowerBound ?? 0 }
         var end: TimeInterval { passes.last?.upperBound ?? 0 }
         var hasRepeat: Bool { passes.count > 1 }
+
+        /// Which pass (0-based) is playing at `time`, and how far through
+        /// it, 0...1. Before the part: (0, 0). After it: last pass, 1.
+        func passProgress(at time: TimeInterval) -> (pass: Int, fraction: Double) {
+            guard let first = passes.first, let last = passes.last else { return (0, 0) }
+            if time < first.lowerBound { return (0, 0) }
+            if time >= last.upperBound { return (passes.count - 1, 1) }
+            for (index, range) in passes.enumerated() where time < range.upperBound {
+                let length = range.upperBound - range.lowerBound
+                return (index, length > 0 ? (time - range.lowerBound) / length : 1)
+            }
+            return (passes.count - 1, 1)
+        }
+    }
+
+    /// The part playing at `time`, or the last one once playback is past
+    /// the end.
+    static func activePart(in timeline: [PartTiming], at time: TimeInterval) -> PartTiming? {
+        timeline.first { time >= $0.start && time < $0.end } ?? timeline.last
     }
 
     static func timeline(of tune: Tune, tempo: Double) -> [PartTiming] {

@@ -21,25 +21,6 @@ struct PartProgressView: View {
         PlayOrder.timeline(of: tune, tempo: tempo)
     }
 
-    /// The part playing at `time`, or the last one once playback is past
-    /// the end.
-    static func activePart(in timeline: [PlayOrder.PartTiming], at time: TimeInterval) -> PlayOrder.PartTiming? {
-        timeline.first { time >= $0.start && time < $0.end } ?? timeline.last
-    }
-
-    /// Which pass (0-based) of `part` is playing at `time`, and how far
-    /// through it, 0...1. Before the part: (0, 0). After it: last pass, 1.
-    static func passProgress(of part: PlayOrder.PartTiming, at time: TimeInterval) -> (pass: Int, fraction: Double) {
-        guard let first = part.passes.first, let last = part.passes.last else { return (0, 0) }
-        if time < first.lowerBound { return (0, 0) }
-        if time >= last.upperBound { return (part.passes.count - 1, 1) }
-        for (index, range) in part.passes.enumerated() where time < range.upperBound {
-            let length = range.upperBound - range.lowerBound
-            return (index, length > 0 ? (time - range.lowerBound) / length : 1)
-        }
-        return (part.passes.count - 1, 1)
-    }
-
     var body: some View {
         let timeline = self.timeline
         let totalBeats = timeline.reduce(0) { $0 + $1.writtenBeats }
@@ -70,7 +51,7 @@ struct PartProgressView: View {
         // A repeated part fills, resets, and fills again — once per pass —
         // each pass measured against its own length, since a first and
         // second ending needn't be the same length.
-        let progress = Self.passProgress(of: part, at: currentTime).fraction
+        let progress = part.passProgress(at: currentTime).fraction
 
         return ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 5)
@@ -94,10 +75,10 @@ struct PartProgressView: View {
     }
 
     private func currentPartDescription(_ timeline: [PlayOrder.PartTiming]) -> String {
-        guard let active = Self.activePart(in: timeline, at: currentTime) else { return "" }
+        guard let active = PlayOrder.activePart(in: timeline, at: currentTime) else { return "" }
         var description = "Part \(active.partIndex + 1) of \(timeline.count)"
         if active.hasRepeat {
-            let pass = Self.passProgress(of: active, at: currentTime).pass
+            let pass = active.passProgress(at: currentTime).pass
             description += pass == 0 ? " (repeat, 1st time)" : " (repeat, 2nd time)"
         }
         return description

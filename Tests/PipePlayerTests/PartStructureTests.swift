@@ -259,9 +259,9 @@ struct PartStructureTests {
 
     @Test func progressFillsEachPassAgainstItsOwnLength() {
         let part = PlayOrder.PartTiming(partIndex: 0, passes: [0..<4, 4..<6], writtenBeats: 5)
-        #expect(PartProgressView.passProgress(of: part, at: 2) == (0, 0.5))
-        #expect(PartProgressView.passProgress(of: part, at: 5) == (1, 0.5))
-        #expect(PartProgressView.passProgress(of: part, at: 7) == (1, 1))
-        #expect(PartProgressView.passProgress(of: part, at: -1) == (0, 0))
+        #expect(part.passProgress(at: 2) == (0, 0.5))
+        #expect(part.passProgress(at: 5) == (1, 0.5))
+        #expect(part.passProgress(at: 7) == (1, 1))
+        #expect(part.passProgress(at: -1) == (0, 0))
     }
 }
