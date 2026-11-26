@@ -21,7 +21,8 @@ a transcription for mistakes, or send someone a recording.
 - Plays ornaments from a reference table of what pipers actually play:
   doublings, throws, grips, taorluath, birls, strikes, crunluath
 - One tab per tune. Starting playback in one tab stops the others
-- Play, pause, seek, tempo, volume, looping, and an optional drone
+- Play, pause, seek, tempo, volume, and an optional drone
+- Loop the whole tune or a single part, for drilling it or playing along
 - MusicXML harmony arrangements play all parts together, with a mute
   checkbox per part
 - Exports to WAV, AAC, or MP4 using your current instrument and settings
@@ -46,6 +47,9 @@ Open a tune (**File → Open…** or drag it onto the window) and press play.
 
 - The bar across the top shows each part of the tune and where you are.
   Click a part to jump to it
+- The loop button (⟳) cycles through looping the tune, looping just the
+  part you're in, and off. While a part loops, click another part to loop
+  that one instead. You can change the tempo without stopping
 - Tempo, volume, and the other controls change playback only. The file is
   never modified
 - Strathspeys are played pointed, the way a piper plays them, instead of

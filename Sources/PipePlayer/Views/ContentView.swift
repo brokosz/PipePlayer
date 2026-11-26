@@ -40,6 +40,7 @@ struct ContentView: View {
                     tune: appState.progressTune ?? tune,
                     currentTime: engine.currentTime,
                     tempo: engine.tempo,
+                    loopedPartIndex: engine.loopedPartIndex,
                     onSeek: { engine.seek(to: $0) }
                 )
                 if engine.voices.count > 1 {

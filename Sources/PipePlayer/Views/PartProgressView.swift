@@ -13,6 +13,8 @@ struct PartProgressView: View {
     let tune: Tune
     let currentTime: TimeInterval
     let tempo: Double
+    /// The part being looped, when the loop button is in part mode.
+    var loopedPartIndex: Int? = nil
     /// Called with a part's start time when the user clicks its segment —
     /// lets the transport seek straight to the beginning of that part.
     var onSeek: (TimeInterval) -> Void = { _ in }
@@ -39,9 +41,15 @@ struct PartProgressView: View {
             }
             .frame(height: 32)
 
-            Text(currentPartDescription(timeline))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                if let active = PlayOrder.activePart(in: timeline, at: currentTime),
+                   active.partIndex == loopedPartIndex {
+                    Image(systemName: "repeat")
+                }
+                Text(currentPartDescription(timeline))
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -52,6 +60,7 @@ struct PartProgressView: View {
         // each pass measured against its own length, since a first and
         // second ending needn't be the same length.
         let progress = part.passProgress(at: currentTime).fraction
+        let isLooped = part.partIndex == loopedPartIndex
 
         return ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 5)
@@ -63,15 +72,24 @@ struct PartProgressView: View {
             }
             // White only once the fill has reached the label — before that
             // it sits on the empty track, where white all but disappears.
-            Text("\(part.partIndex + 1)")
-                .font(.caption2.bold())
-                .foregroundStyle(isActive && progress * width > 24 ? Color.white : isActive ? Color.accentColor : Color.secondary)
-                .padding(.leading, 6)
+            HStack(spacing: 3) {
+                Text("\(part.partIndex + 1)")
+                if isLooped {
+                    Image(systemName: "repeat")
+                }
+            }
+            .font(.caption2.bold())
+            .foregroundStyle(isActive && progress * width > (isLooped ? 36 : 24) ? Color.white : isActive ? Color.accentColor : Color.secondary)
+            .padding(.leading, 6)
+            if isLooped {
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
+            }
         }
         .frame(width: max(0, width))
         .contentShape(Rectangle())
         .onTapGesture { onSeek(part.start) }
-        .help("Jump to Part \(part.partIndex + 1)")
+        .help(isLooped ? "Part \(part.partIndex + 1) is looping" : "Jump to Part \(part.partIndex + 1)")
     }
 
     private func currentPartDescription(_ timeline: [PlayOrder.PartTiming]) -> String {
