@@ -17,6 +17,14 @@ struct TransportControlsView: View {
     @State private var tempoDraftText: String = ""
     @State private var exportErrorMessage: String?
 
+    private var loopHelp: String {
+        switch engine.loopMode {
+        case .off: return "Loop: off (click to loop the tune)"
+        case .tune: return "Looping the tune (click to loop just the current part)"
+        case .part: return "Looping the current part — click a part to loop that one instead (click to turn looping off)"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             if engine.isExporting {
@@ -37,11 +45,16 @@ struct TransportControlsView: View {
                 }
                 .buttonStyle(.borderedProminent)
 
-                Toggle(isOn: $engine.isLooping) {
-                    Image(systemName: "repeat")
+                // Three states, like Music's repeat / repeat-one: each tap
+                // moves on (off → tune → part → off).
+                Toggle(isOn: Binding(
+                    get: { engine.loopMode != .off },
+                    set: { _ in engine.cycleLoopMode() }
+                )) {
+                    Image(systemName: engine.loopMode == .part ? "repeat.1" : "repeat")
                 }
                 .toggleStyle(.button)
-                .help("Loop")
+                .help(loopHelp)
 
                 Toggle(isOn: $engine.isDroneEnabled) {
                     Image(systemName: "waveform")

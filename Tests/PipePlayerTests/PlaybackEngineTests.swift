@@ -138,10 +138,11 @@ struct PlaybackEngineTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
-    @Test func exportRestoresLoopingStateAfterFinishing() async throws {
+    @Test func exportRestoresLoopModeAfterFinishing() async throws {
         let engine = PlaybackEngine()
         engine.load(voices: [voice(timeSignature: "2/4", tempo: 240)])
-        engine.isLooping = true
+        engine.cycleLoopMode()
+        engine.cycleLoopMode()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -153,7 +154,76 @@ struct PlaybackEngineTests {
 
         // Export forces exactly one pass regardless of the Loop toggle, but
         // shouldn't silently clear the user's actual Loop setting afterward.
-        #expect(engine.isLooping)
+        #expect(engine.loopMode == .part)
+    }
+
+    // MARK: - Part looping
+
+    /// Two parts, two beats each: at tempo 60, part 1 is 0..<2, part 2 2..<4.
+    private func twoPartVoice() -> Voice {
+        func part(_ pitch: Pitch) -> TunePart {
+            TunePart(measures: [Measure(notes: [
+                NoteEvent(pitch: pitch, duration: 1, embellishment: nil),
+                NoteEvent(pitch: pitch, duration: 1, embellishment: nil)
+            ])])
+        }
+        let tune = Tune(title: "T", composer: nil, tempo: 60, timeSignature: "2/4", parts: [part(.b), part(.d)])
+        return Voice(id: "melody", name: "Melody", tune: tune)
+    }
+
+    @Test func loopButtonCyclesThroughThreeModes() {
+        let engine = PlaybackEngine()
+        engine.load(voices: [twoPartVoice()])
+        #expect(engine.loopMode == .off)
+        engine.cycleLoopMode()
+        #expect(engine.loopMode == .tune)
+        #expect(engine.loopRange == nil)
+        engine.cycleLoopMode()
+        #expect(engine.loopMode == .part)
+        engine.cycleLoopMode()
+        #expect(engine.loopMode == .off)
+        #expect(engine.loopedPartIndex == nil)
+    }
+
+    @Test func partModeLoopsThePartAtThePlayhead() {
+        let engine = PlaybackEngine()
+        engine.load(voices: [twoPartVoice()])
+        engine.seek(to: 3)
+        engine.cycleLoopMode()
+        engine.cycleLoopMode()
+        #expect(engine.loopedPartIndex == 1)
+        #expect(engine.loopRange == 2..<4)
+    }
+
+    @Test func seekingIntoAnotherPartMovesTheLoop() {
+        let engine = PlaybackEngine()
+        engine.load(voices: [twoPartVoice()])
+        engine.cycleLoopMode()
+        engine.cycleLoopMode()
+        #expect(engine.loopedPartIndex == 0)
+        engine.seek(to: 2.5)
+        #expect(engine.loopedPartIndex == 1)
+    }
+
+    @Test func tempoChangeRescalesTheLoop() {
+        let engine = PlaybackEngine()
+        engine.load(voices: [twoPartVoice()])
+        engine.seek(to: 3)
+        engine.cycleLoopMode()
+        engine.cycleLoopMode()
+        engine.tempo = 120
+        #expect(engine.loopedPartIndex == 1)
+        #expect(engine.loopRange == 1..<2)
+    }
+
+    @Test func loadingATuneClearsTheLoopedPart() {
+        let engine = PlaybackEngine()
+        engine.load(voices: [twoPartVoice()])
+        engine.cycleLoopMode()
+        engine.cycleLoopMode()
+        engine.load(voices: [twoPartVoice()])
+        #expect(engine.loopedPartIndex == 0)
+        #expect(engine.loopMode == .part)
     }
 
     @Test func scaledEventsLeavesNoteOnVelocityAtFullScale() {

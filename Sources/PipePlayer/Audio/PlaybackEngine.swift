@@ -8,6 +8,11 @@ enum PlaybackState: Equatable {
     case stopped, playing, paused
 }
 
+/// The loop button's three states — like Music's repeat / repeat-one.
+enum LoopMode: Equatable {
+    case off, tune, part
+}
+
 /// AVFoundation/AudioToolbox completion handlers hand back plain classes
 /// (`AVAudioUnit`, `AVAudioUnitComponent`) and closures that predate Swift
 /// concurrency and aren't marked `Sendable`. This is the standard escape
@@ -46,7 +51,15 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     @Published private(set) var isExporting = false
     @Published private(set) var exportProgress: Double = 0
     @Published var tempo: Double = 90 {
-        didSet { rebuildEvents(preservingPosition: true) }
+        didSet {
+            // Keep the playhead at the same place in the music, not the
+            // same number of seconds in — otherwise speeding up jumps
+            // forward, and a part loop can land outside its own part.
+            if oldValue > 0, tempo > 0, oldValue != tempo {
+                currentTime *= oldValue / tempo
+            }
+            rebuildEvents(preservingPosition: true)
+        }
     }
     /// `tempo` ÷ this factor is what the UI shows/edits — undoes whatever
     /// meter-based scaling the source format's parser already baked into
@@ -58,7 +71,10 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     @Published var volume: Float = 0.8 {
         didSet { sampler.volume = volume }
     }
-    @Published var isLooping = false
+    @Published private(set) var loopMode: LoopMode = .off
+    /// The part being looped in `.part` mode — follows the playhead when
+    /// you click or scrub into another part.
+    @Published private(set) var loopedPartIndex: Int?
     @Published var isMIDIOutputEnabled = false
     @Published var instrumentProgram = GeneralMIDI.defaultProgram {
         didSet {
@@ -114,6 +130,9 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     private var uiTickTimer: Timer?
     private var playbackAnchorWallClock: Date?
     private var playbackAnchorOffset: TimeInterval = 0
+    /// The range the running scheduler is wrapping in, if any — the UI
+    /// clock has to wrap the same way.
+    private var activeLoop: Range<TimeInterval>?
     private var exportCancelRequested = false
     private lazy var dlsSoundBankPath: String? = {
         let candidatePaths = [
@@ -288,6 +307,7 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         stop()
         voices = newVoices
         mutedVoiceIDs = []
+        loopedPartIndex = loopMode == .part ? 0 : nil
         displayTempoScaleFactor = newVoices.first?.displayTempoScaleFactor ?? 1.0
         tempo = newVoices.first?.tune.tempo ?? 90
         rebuildEvents(preservingPosition: false)
@@ -379,10 +399,52 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         }
     }
 
+    // MARK: - Looping
+
+    /// Off → loop the tune → loop the part at the playhead → off.
+    func cycleLoopMode() {
+        switch loopMode {
+        case .off: loopMode = .tune
+        case .tune: loopMode = .part
+        case .part: loopMode = .off
+        }
+        loopedPartIndex = loopMode == .part ? partIndex(at: currentTime) : nil
+        restartSchedulerIfPlaying()
+    }
+
+    /// The looped part's span at the current tempo — from the same play
+    /// order the audio is built from, so the seam lands where it's heard.
+    var loopRange: Range<TimeInterval>? {
+        guard loopMode == .part, let index = loopedPartIndex,
+              let part = partTimeline.first(where: { $0.partIndex == index }),
+              part.end > part.start else { return nil }
+        return part.start..<part.end
+    }
+
+    private var partTimeline: [PlayOrder.PartTiming] {
+        guard let tune = voices.first?.tune else { return [] }
+        return PlayOrder.timeline(of: tune, tempo: tempo)
+    }
+
+    private func partIndex(at time: TimeInterval) -> Int? {
+        PlayOrder.activePart(in: partTimeline, at: time)?.partIndex
+    }
+
+    private func restartSchedulerIfPlaying() {
+        guard state == .playing else { return }
+        scheduler.stop()
+        silenceAllNotes()
+        startScheduler(from: currentTime)
+        if isDroneEnabled { startDrone() }
+    }
+
     // MARK: - Transport
 
     func play() {
         guard !events.isEmpty else { return }
+        if let range = loopRange, !range.contains(currentTime) {
+            currentTime = range.lowerBound
+        }
         // Stops whichever other window/tab is currently playing — only one
         // tune should ever be audibly playing across the whole app.
         PlaybackCoordinator.shared.willStartPlaying(self)
@@ -416,18 +478,29 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         scheduler.stop()
         silenceAllNotes()
         currentTime = max(0, min(time, duration))
+        if loopMode == .part {
+            loopedPartIndex = partIndex(at: currentTime)
+        }
         if wasPlaying {
             startScheduler(from: currentTime)
             if isDroneEnabled { startDrone() }
         }
     }
 
-    private func startScheduler(from time: TimeInterval) {
+    private func startScheduler(from requestedTime: TimeInterval) {
+        let loop = loopRange
+        var time = requestedTime
+        if let loop, !loop.contains(time) {
+            time = loop.lowerBound
+            currentTime = time
+        }
+        activeLoop = loop
         playbackAnchorWallClock = Date()
         playbackAnchorOffset = time
         scheduler.start(
             events: events,
             from: time,
+            loop: loop,
             onNoteOn: { [weak self] note, velocity, channel in self?.handleNoteOn(note, velocity, channel: channel) },
             onNoteOff: { [weak self] note, channel in self?.handleNoteOff(note, channel: channel) },
             onFinished: { [weak self] in self?.handleFinished() }
@@ -500,7 +573,8 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     private func handleFinished() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if self.isLooping {
+            // A part loop wraps inside the scheduler and never finishes.
+            if self.loopMode == .tune {
                 self.currentTime = 0
                 // Deliberately not stopping the drone here — play()'s own
                 // startDrone() call becomes a no-op (already-on note,
@@ -543,8 +617,12 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
 
     private func tickUIProgress() {
         guard state == .playing, let anchor = playbackAnchorWallClock else { return }
-        let elapsed = playbackAnchorOffset + Date().timeIntervalSince(anchor)
-        currentTime = min(elapsed, duration)
+        let sinceStart = Date().timeIntervalSince(anchor)
+        if let loop = activeLoop {
+            currentTime = PlaybackScheduler.loopedTime(elapsed: sinceStart, from: playbackAnchorOffset, loop: loop)
+        } else {
+            currentTime = min(playbackAnchorOffset + sinceStart, duration)
+        }
         // Self-healing check, piggybacked on this existing 30Hz timer rather
         // than adding a second one: several paths silence every active note
         // (seek, rebuildEvents on a mid-playback tempo/mute change) and only
