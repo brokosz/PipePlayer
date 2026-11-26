@@ -2,21 +2,28 @@ import Foundation
 import AppKit
 import UniformTypeIdentifiers
 
-/// Owns the currently-loaded tune, the shared `PlaybackEngine`, and the
-/// recent-files list — shared between `ContentView` and the File menu
-/// commands (which live at the Scene level, outside the view hierarchy, so
-/// they need a reference to the same state rather than view-local `@State`).
+/// One tab's tune and `PlaybackEngine` — shared between `ContentView` and
+/// the File menu commands (which live at the Scene level, outside the view
+/// hierarchy, so they need a reference to the same state rather than
+/// view-local `@State`). The recent-files list is app-wide: `RecentTunes`.
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var voices: [Voice] = []
     @Published var errorMessage: String?
-    @Published private(set) var recentURLs: [URL] = []
+    /// The file this window's tune came from — what `ContentView` persists
+    /// so the tab can reopen it after a relaunch.
+    @Published private(set) var currentURL: URL?
 
     /// The primary voice's tune — drives the window title. For a multi-voice
     /// MusicXML harmony arrangement this is the first `<part>` (conventionally
     /// the melody); every voice still contributes audio via `engine`,
     /// independent of what's shown here.
     var tune: Tune? { voices.first?.tune }
+
+    /// The window (or tab) showing this state, set by `ContentView` — what
+    /// `TuneOpener` brings forward when a file that's already open here is
+    /// opened again.
+    weak var window: NSWindow?
 
     /// The primary voice's tune with embellishments already expanded —
     /// what `PartProgressView` measures its part spans against. Grace notes
@@ -27,6 +34,8 @@ final class AppState: ObservableObject {
     /// `MIDIEventBuilder` expands internally too — this is computed once
     /// here (not per SwiftUI body re-render) so both sides agree on the same
     /// timeline without re-running the expansion dozens of times a second.
+    /// Same goes for `PerformanceStyle`: a pointed strathspey's cuts land
+    /// at different spots inside the beat than written.
     @Published private(set) var progressTune: Tune?
 
     let engine = PlaybackEngine()
@@ -35,34 +44,80 @@ final class AppState: ObservableObject {
     // lifetime — see NowPlayingController.
     private var nowPlayingController: NowPlayingController?
 
-    private let recentsDefaultsKey = "PipePlayer.recentFileURLs"
-    private let maxRecents = 10
+    let recents: RecentTunes
 
-    init() {
-        loadRecents()
+    init(recents: RecentTunes = .shared) {
+        self.recents = recents
+        OpenTabs.shared.register(self)
         nowPlayingController = NowPlayingController(engine: engine)
     }
 
-    func presentOpenPanel() {
+    /// Static so File → Open works with no window open at all — there's no
+    /// AppState to call it on until a window exists. Several files at once
+    /// open one per tab (see `TuneOpener`).
+    static func chooseTuneFiles() -> [URL] {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = TuneFileLoader.supportedExtensions.compactMap { UTType(filenameExtension: $0) }
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        open(url: url)
+        guard panel.runModal() == .OK else { return [] }
+        return panel.urls
     }
 
-    func open(url: URL) {
+    func bringToFront() {
+        // Deferred a turn: when the request came from Finder, SwiftUI
+        // re-fronts whichever tab received the event right after this
+        // returns, undoing an immediate switch.
+        DispatchQueue.main.async { [weak self] in
+            guard let window = self?.window else { return }
+            NSApp?.activate(ignoringOtherApps: true)
+            // A background tab ignores makeKeyAndOrderFront on its own — it
+            // has to be selected in its tab group first.
+            window.tabGroup?.selectedWindow = window
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// `addToRecents: false` is for restoring a tab's tune on relaunch —
+    /// reopening every restored tab shouldn't reshuffle Open Recent into
+    /// whatever order the windows happened to come back in.
+    func open(url: URL, addToRecents: Bool = true) {
         do {
             let loadedVoices = try TuneFileLoader.loadVoices(from: url)
             let alignedVoices = VoiceAligner.align(loadedVoices)
             voices = alignedVoices
-            progressTune = alignedVoices.first.map { EmbellishmentExpander.expand(tune: $0.tune) }
+            progressTune = alignedVoices.first.map { EmbellishmentExpander.expand(tune: PerformanceStyle.apply(to: $0.tune)) }
             engine.load(voices: alignedVoices)
-            addRecent(url)
+            currentURL = url
+            if addToRecents { recents.add(url) }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Per-tab playback settings
+
+    /// The tempo this tab plays at, when it isn't the file's own — what
+    /// `ContentView` persists per tab. Raw playback tempo, not the
+    /// meter-scaled number the tempo field shows.
+    var tempoOverride: Double? {
+        guard let fileTempo = tune?.tempo, engine.tempo != fileTempo else { return nil }
+        return engine.tempo
+    }
+
+    /// Puts back a restored tab's tempo and voice mutes once its tune is
+    /// loaded (loading resets both). Voice IDs the file no longer has are
+    /// ignored — it may have been edited since.
+    func applyPlaybackSettings(tempoOverride: Double?, mutedVoiceIDs: Set<String>) {
+        guard let tune else { return }
+        let target = tempoOverride ?? tune.tempo
+        if engine.tempo != target { engine.tempo = target }
+        for voice in voices {
+            let shouldMute = mutedVoiceIDs.contains(voice.id)
+            if engine.mutedVoiceIDs.contains(voice.id) != shouldMute {
+                engine.setVoiceMuted(id: voice.id, muted: shouldMute)
+            }
         }
     }
 
@@ -70,33 +125,6 @@ final class AppState: ObservableObject {
         engine.stop()
         voices = []
         progressTune = nil
-    }
-
-    // MARK: - Recents
-
-    private func addRecent(_ url: URL) {
-        var urls = recentURLs.filter { $0 != url }
-        urls.insert(url, at: 0)
-        if urls.count > maxRecents {
-            urls.removeLast(urls.count - maxRecents)
-        }
-        recentURLs = urls
-        saveRecents()
-    }
-
-    func clearRecents() {
-        recentURLs = []
-        saveRecents()
-    }
-
-    private func loadRecents() {
-        guard let paths = UserDefaults.standard.array(forKey: recentsDefaultsKey) as? [String] else { return }
-        recentURLs = paths
-            .map { URL(fileURLWithPath: $0) }
-            .filter { FileManager.default.fileExists(atPath: $0.path) }
-    }
-
-    private func saveRecents() {
-        UserDefaults.standard.set(recentURLs.map(\.path), forKey: recentsDefaultsKey)
+        currentURL = nil
     }
 }
