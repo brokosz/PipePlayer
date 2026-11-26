@@ -24,16 +24,22 @@ final class PlaybackScheduler: @unchecked Sendable {
     private let lock = NSLock()
     private var generation = 0
 
+    /// - Parameter loop: when set, play to the range's end and carry on
+    ///   from its start, forever (until `stop`), with no gap at the seam:
+    ///   each pass is timed from the same anchor, so the wrap costs nothing.
     func start(
         events: [ScheduledMIDIEvent],
         from startTime: TimeInterval,
+        loop: Range<TimeInterval>? = nil,
         onNoteOn: @escaping @Sendable (UInt8, UInt8, UInt8) -> Void, // note, velocity, channel
         onNoteOff: @escaping @Sendable (UInt8, UInt8) -> Void, // note, channel
         onFinished: @escaping @Sendable () -> Void
     ) {
         stop()
-        let pending = events.filter { $0.time >= startTime }
-        guard !pending.isEmpty else {
+        let slice = loop.map { Self.loopSlice(events, $0) } ?? []
+        let isLooping = (loop.map { !$0.isEmpty } ?? false) && !slice.isEmpty
+        let pending = isLooping ? [] : events.filter { $0.time >= startTime }
+        guard isLooping || !pending.isEmpty else {
             onFinished()
             return
         }
@@ -46,24 +52,45 @@ final class PlaybackScheduler: @unchecked Sendable {
 
         let thread = Thread { [weak self] in
             let anchor = Date()
-            var index = 0
-            while index < pending.count {
-                guard let self, self.isCurrent(myGeneration) else { return }
-                let event = pending[index]
-                let targetElapsed = event.time - startTime
-                let elapsed = Date().timeIntervalSince(anchor)
-                let remaining = targetElapsed - elapsed
-                if remaining > 0.002 {
-                    Thread.sleep(forTimeInterval: min(remaining, 0.002))
-                    continue
+            // Plays one list of (elapsed, event) against the shared anchor;
+            // false if stopped partway.
+            func play(_ timed: [(elapsed: TimeInterval, event: ScheduledMIDIEvent)], sounding: inout Set<[UInt8]>) -> Bool {
+                var index = 0
+                while index < timed.count {
+                    guard let self, self.isCurrent(myGeneration) else { return false }
+                    let (targetElapsed, event) = timed[index]
+                    let remaining = targetElapsed - Date().timeIntervalSince(anchor)
+                    if remaining > 0.002 {
+                        Thread.sleep(forTimeInterval: min(remaining, 0.002))
+                        continue
+                    }
+                    switch event.kind {
+                    case .noteOn:
+                        onNoteOn(event.note, event.velocity, event.channel)
+                        sounding.insert([event.note, event.channel])
+                    case .noteOff:
+                        onNoteOff(event.note, event.channel)
+                        sounding.remove([event.note, event.channel])
+                    }
+                    index += 1
                 }
-                switch event.kind {
-                case .noteOn: onNoteOn(event.note, event.velocity, event.channel)
-                case .noteOff: onNoteOff(event.note, event.channel)
-                }
-                index += 1
+                return true
             }
-            if let self, self.isCurrent(myGeneration) {
+
+            var sounding: Set<[UInt8]> = []
+            if let loop, isLooping {
+                var pass = 0
+                while play(Self.loopPass(pass, slice: slice, from: startTime, loop: loop), sounding: &sounding) {
+                    // A note still on at the seam (a tie running past the
+                    // part's end) would otherwise hang across the wrap.
+                    for key in sounding { onNoteOff(key[0], key[1]) }
+                    sounding.removeAll()
+                    pass += 1
+                }
+                return
+            }
+            let timed = pending.map { (elapsed: $0.time - startTime, event: $0) }
+            if play(timed, sounding: &sounding), let self, self.isCurrent(myGeneration) {
                 onFinished()
             }
         }
@@ -71,6 +98,45 @@ final class PlaybackScheduler: @unchecked Sendable {
         thread.qualityOfService = .userInteractive
         thread.threadPriority = 1.0
         thread.start()
+    }
+
+    // MARK: - Loop arithmetic
+
+    /// The events one time round `loop` plays: everything starting inside
+    /// it, plus note-offs landing exactly on its end (a note-on there
+    /// belongs to whatever follows).
+    static func loopSlice(_ events: [ScheduledMIDIEvent], _ loop: Range<TimeInterval>) -> [ScheduledMIDIEvent] {
+        events.filter { event in
+            (event.time >= loop.lowerBound && event.time < loop.upperBound)
+                || (event.kind == .noteOff && event.time == loop.upperBound)
+        }
+    }
+
+    /// One time round the loop, timed from the moment playback started.
+    /// Pass 0 begins at `startTime` (possibly mid-loop); every later pass
+    /// is the whole slice, following on with no gap.
+    static func loopPass(
+        _ pass: Int,
+        slice: [ScheduledMIDIEvent],
+        from startTime: TimeInterval,
+        loop: Range<TimeInterval>
+    ) -> [(elapsed: TimeInterval, event: ScheduledMIDIEvent)] {
+        if pass == 0 {
+            return slice.filter { $0.time >= startTime }.map { ($0.time - startTime, $0) }
+        }
+        let length = loop.upperBound - loop.lowerBound
+        let passStart = (loop.upperBound - startTime) + Double(pass - 1) * length
+        return slice.map { (passStart + ($0.time - loop.lowerBound), $0) }
+    }
+
+    /// Where in the tune playback is, `elapsed` seconds after starting at
+    /// `startTime` inside `loop` — for the UI clock, which has to wrap with
+    /// the audio.
+    static func loopedTime(elapsed: TimeInterval, from startTime: TimeInterval, loop: Range<TimeInterval>) -> TimeInterval {
+        let length = loop.upperBound - loop.lowerBound
+        let time = startTime + elapsed
+        guard length > 0, time >= loop.upperBound else { return time }
+        return loop.lowerBound + (time - loop.upperBound).truncatingRemainder(dividingBy: length)
     }
 
     private func isCurrent(_ generationToCheck: Int) -> Bool {
