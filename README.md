@@ -62,8 +62,13 @@ press play. From there:
   you are — click any part to jump straight to it
 - Drag the tempo, volume, and other controls to taste; none of it affects
   the file itself, just how it plays back
-- Open another tune in a new tab (**File → New Window**) to compare two
-  arrangements, or queue up a set
+- Strathspeys are played pointed, the way a piper plays them, rather than
+  with the lazy swing of the rhythm as literally written
+- Opening another tune puts it in a new tab, so you can compare two
+  arrangements or queue up a set — open or drop several at once and each
+  gets its own. Opening one that's already open just switches to its tab
+- Quit and come back later: your tabs reopen with the same tunes, at the
+  same tempo, with the same voices muted
 - When it sounds the way you want, use the export button (⬆) to save it as
   an audio file
 

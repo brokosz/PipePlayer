@@ -7,6 +7,13 @@ struct PipePlayerApp: App {
             ContentView()
         }
         .windowResizability(.contentSize)
+        // By default a WindowGroup opens a brand-new window for every file
+        // Finder hands it, before any code sees the URL — so reopening an
+        // already-open tune left an empty tab behind. Matching nothing here
+        // sends the URL to an existing window's `onOpenURL` instead, and
+        // `TuneOpener` decides where it really goes. With no window open,
+        // SwiftUI still makes one.
+        .handlesExternalEvents(matching: [])
         .commands {
             CommandGroup(replacing: .newItem) {
                 AppMenuCommands()
@@ -26,6 +33,7 @@ struct PipePlayerApp: App {
 /// command which window's state to act on.
 private struct AppMenuCommands: View {
     @FocusedObject private var appState: AppState?
+    @ObservedObject private var recents = RecentTunes.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -35,46 +43,29 @@ private struct AppMenuCommands: View {
         .keyboardShortcut("n", modifiers: .command)
 
         Button("Open…") {
-            if let appState {
-                appState.presentOpenPanel()
-            } else if let url = AppState.chooseTuneFile() {
-                openInNewWindow(url)
-            }
+            AppState.chooseTuneFiles().forEach(open)
         }
         .keyboardShortcut("o", modifiers: .command)
 
         Menu("Open Recent") {
-            let recents = appState?.recentURLs ?? AppState.storedRecentURLs()
-            if recents.isEmpty {
+            if recents.urls.isEmpty {
                 Button("No Recent Files") {}
                     .disabled(true)
             } else {
-                ForEach(recents, id: \.self) { url in
-                    Button(url.lastPathComponent) {
-                        if let appState {
-                            appState.open(url: url)
-                        } else {
-                            openInNewWindow(url)
-                        }
-                    }
+                ForEach(recents.urls, id: \.self) { url in
+                    Button(url.lastPathComponent) { open(url) }
                 }
                 Divider()
-                Button("Clear Menu") {
-                    if let appState {
-                        appState.clearRecents()
-                    } else {
-                        AppState.clearStoredRecents()
-                    }
-                }
+                Button("Clear Menu") { recents.clear() }
             }
         }
     }
 
-    /// With no window open there's no AppState to load into, so open a
-    /// window for the file — it picks the URL up on appear.
-    private func openInNewWindow(_ url: URL) {
-        PendingTuneOpens.shared.enqueue(url)
-        openWindow(id: "main")
+    /// With no window open there's no AppState to load into, so
+    /// `TuneOpener` opens a window for the file — it picks the URL up on
+    /// appear.
+    private func open(_ url: URL) {
+        TuneOpener.open(url, from: appState) { openWindow(id: "main") }
     }
 }
 

@@ -261,6 +261,15 @@ enum ABCParser {
         let chars = Array(body)
         var i = 0
         var pendingGraceNotes: [NoteEvent] = []
+        // Broken rhythm: `A>B` is A dotted and B halved, `A<B` the reverse
+        // (`>>` / `<<` double-dot). The pair's total is unchanged, so the
+        // second note's share is carried forward to whichever note or rest
+        // comes next.
+        var nextBrokenFactor = 1.0
+        func brokenRhythmFactors(_ count: Int) -> (long: Double, short: Double) {
+            let short = pow(0.5, Double(count))
+            return (2 - short, short)
+        }
         var tripletCounters: [(remaining: Int, factor: Double)] = []
 
         func nextTripletFactor() -> Double {
@@ -368,7 +377,8 @@ enum ABCParser {
                 i += 1
                 let (mult, consumed) = parseLengthModifier(chars, from: i)
                 i += consumed
-                let factor = nextTripletFactor()
+                let factor = nextTripletFactor() * nextBrokenFactor
+                nextBrokenFactor = 1.0
                 tokens.append(.note(NoteEvent(pitch: .lowA, duration: defaultLength * mult * factor, embellishment: nil, isRest: true)))
                 continue
             }
@@ -381,18 +391,26 @@ enum ABCParser {
                 let (mult, consumed) = parseLengthModifier(chars, from: i)
                 i += consumed
 
-                var isDotted = false
                 var isTied = false
-                // Broken rhythm / tie look-ahead.
-                if i < chars.count {
-                    if chars[i] == ">" { isDotted = true; i += 1 }
-                    else if chars[i] == "<" { i += 1 /* next note gets the dot; simplified as no-op for prior */ }
-                    else if chars[i] == "-" { isTied = true; i += 1 }
+                var brokenFactor = nextBrokenFactor
+                nextBrokenFactor = 1.0
+                // Broken rhythm / tie look-ahead. Was once `>` only, and
+                // only as "dot this note" — the next note kept its full
+                // length (so every `A>B` bar ran long) and `<` was ignored.
+                if i < chars.count, chars[i] == ">" || chars[i] == "<" {
+                    let symbol = chars[i]
+                    var count = 0
+                    while i < chars.count && chars[i] == symbol { count += 1; i += 1 }
+                    let (long, short) = brokenRhythmFactors(count)
+                    brokenFactor *= symbol == ">" ? long : short
+                    nextBrokenFactor = symbol == ">" ? short : long
+                } else if i < chars.count, chars[i] == "-" {
+                    isTied = true
+                    i += 1
                 }
 
-                let factor = nextTripletFactor()
+                let factor = nextTripletFactor() * brokenFactor
                 var note = NoteEvent(pitch: p, duration: defaultLength * mult * factor, embellishment: nil)
-                note.isDotted = isDotted
                 note.isTiedToNext = isTied
 
                 if !pendingGraceNotes.isEmpty {

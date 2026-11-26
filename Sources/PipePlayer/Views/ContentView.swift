@@ -19,6 +19,11 @@ struct ContentView: View {
     // A bookmark rather than a path, so a tune moved or renamed in the
     // meantime still reopens.
     @SceneStorage("PipePlayer.tuneBookmark") private var tuneBookmark: Data?
+    // Tempo (0 = the file's own) and muted voice IDs, newline-joined —
+    // SceneStorage only takes plain scalar types.
+    @SceneStorage("PipePlayer.tempoOverride") private var savedTempo: Double = 0
+    @SceneStorage("PipePlayer.mutedVoices") private var savedMutes: String = ""
+    @Environment(\.openWindow) private var openWindow
 
     init() {
         let state = AppState()
@@ -49,6 +54,7 @@ struct ContentView: View {
         .frame(minWidth: 480, minHeight: 460)
         .navigationTitle(windowTitle)
         .background(dropHighlightOverlay)
+        .background(WindowAccessor { appState.window = $0 })
         .onDrop(of: [.fileURL], isTargeted: $isTargetedForDrop) { providers in
             handleDrop(providers)
         }
@@ -73,16 +79,25 @@ struct ContentView: View {
             // alone always saw nil. This is where restoration actually lands.
             restoreTuneIfNeeded()
         }
+        .onChange(of: savedTempo) { _ in applySavedPlaybackSettings() }
+        .onChange(of: savedMutes) { _ in applySavedPlaybackSettings() }
         .onChange(of: appState.currentURL) { url in
             tuneBookmark = url.flatMap { try? $0.bookmarkData() }
+            if url == nil {
+                savedTempo = 0
+                savedMutes = ""
+            }
         }
+        .onChange(of: engine.tempo) { _ in savePlaybackSettings() }
+        .onChange(of: engine.mutedVoiceIDs) { _ in savePlaybackSettings() }
         .onOpenURL { url in
             // Finder's "Open With"/double-click and the custom document-type
             // registrations in package_app.sh's Info.plist deliver the file
             // here — without this, Launch Services still launches/activates
             // the app and opens a window, but nothing ever reads the file.
-            appState.open(url: url)
+            openTune(url)
         }
+        .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         .focusedSceneObject(appState)
         .alert(
             "Couldn't open file",
@@ -117,7 +132,9 @@ struct ContentView: View {
                 }
             }
             Spacer()
-            Button("Open…") { appState.presentOpenPanel() }
+            Button("Open…") {
+                AppState.chooseTuneFiles().forEach(openTune)
+            }
         }
     }
 
@@ -140,6 +157,10 @@ struct ContentView: View {
         }
     }
 
+    private func openTune(_ url: URL) {
+        TuneOpener.open(url, from: appState) { openWindow(id: "main") }
+    }
+
     /// A bookmark that no longer resolves means the file is gone — the tab
     /// just comes back empty rather than greeting a relaunch with an error.
     /// One that resolves but fails to parse still alerts, since that's a
@@ -147,16 +168,22 @@ struct ContentView: View {
     /// refreshed automatically once `open` updates `currentURL`.
     ///
     /// If a file already landed in this tab before the restored value
-    /// arrived (Finder double-click on a relaunching app), the late restore
-    /// would clobber the bookmark with the tab's *previous* tune — so put
-    /// back the one actually showing instead.
+    /// arrived (a Finder double-click that launches the app races the
+    /// restore), the tab keeps that file and its restored tune moves to a
+    /// tab of its own rather than being dropped.
     private func restoreTuneIfNeeded() {
         guard let bookmark = tuneBookmark else { return }
         var isStale = false
         let url = try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
         if let current = appState.currentURL {
-            if !(url.map { Self.isSameFile($0, current) } ?? false) {
-                tuneBookmark = try? current.bookmarkData()
+            guard let url, !url.isSameFile(as: current) else {
+                if url == nil { tuneBookmark = try? current.bookmarkData() }
+                return
+            }
+            tuneBookmark = try? current.bookmarkData()
+            if OpenTabs.shared.tab(showing: url) == nil {
+                PendingTuneOpens.shared.enqueue(url)
+                openWindow(id: "main")
             }
             return
         }
@@ -166,27 +193,57 @@ struct ContentView: View {
             return
         }
         appState.open(url: url, addToRecents: false)
+        applySavedPlaybackSettings()
     }
 
-    /// By file identity, not path string — a resolved bookmark can come
-    /// back spelled differently (symlinks, case) than the URL it was made
-    /// from, and a path compare would rewrite the bookmark forever.
-    private static func isSameFile(_ a: URL, _ b: URL) -> Bool {
-        let key: Set<URLResourceKey> = [.fileResourceIdentifierKey]
-        if let idA = try? a.resourceValues(forKeys: key).fileResourceIdentifier,
-           let idB = try? b.resourceValues(forKeys: key).fileResourceIdentifier {
-            return idA.isEqual(idB)
-        }
-        return a.resolvingSymlinksInPath().path == b.resolvingSymlinksInPath().path
+    private func applySavedPlaybackSettings() {
+        appState.applyPlaybackSettings(
+            tempoOverride: savedTempo > 0 ? savedTempo : nil,
+            mutedVoiceIDs: Set(savedMutes.split(separator: "\n").map(String.init))
+        )
+    }
+
+    private func savePlaybackSettings() {
+        guard appState.tune != nil else { return }
+        let tempo = appState.tempoOverride ?? 0
+        let mutes = engine.mutedVoiceIDs.sorted().joined(separator: "\n")
+        if savedTempo != tempo { savedTempo = tempo }
+        if savedMutes != mutes { savedMutes = mutes }
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first, provider.canLoadObject(ofClass: URL.self) else { return false }
-        _ = provider.loadObject(ofClass: URL.self) { url, _ in
-            if let url {
-                DispatchQueue.main.async { appState.open(url: url) }
+        let fileProviders = providers.filter { $0.canLoadObject(ofClass: URL.self) }
+        guard !fileProviders.isEmpty else { return false }
+        for provider in fileProviders {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url {
+                    DispatchQueue.main.async { openTune(url) }
+                }
             }
         }
         return true
+    }
+}
+
+/// Hands back the `NSWindow` hosting a SwiftUI view — SwiftUI has no
+/// public way to reach it, and `TuneOpener` needs it to bring an
+/// already-open tab forward.
+private struct WindowAccessor: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = ReportingView()
+        view.onWindow = onWindow
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class ReportingView: NSView {
+        var onWindow: ((NSWindow?) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindow?(window)
+        }
     }
 }

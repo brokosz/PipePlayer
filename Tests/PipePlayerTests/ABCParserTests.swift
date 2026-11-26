@@ -285,4 +285,25 @@ struct ABCParserTests {
         let tune = try ABCParser.parse(noHint)
         #expect(abs(tune.tempo - 90) < 0.001)
     }
+
+    private func firstMeasure(_ body: String) throws -> [NoteEvent] {
+        let tune = try ABCParser.parse("X:1\nT:B\nM:4/4\nL:1/8\nK:HP\n\(body)\n")
+        return tune.parts.first?.measures.first?.notes ?? []
+    }
+
+    @Test func brokenRhythmDotsTheFirstAndHalvesTheSecond() throws {
+        let notes = try firstMeasure("A>B c<d e>>f g<<a|")
+        #expect(notes.map(\.duration) == [0.75, 0.25, 0.25, 0.75, 0.875, 0.125, 0.125, 0.875])
+        #expect(notes.allSatisfy { !$0.isDotted })
+    }
+
+    @Test func brokenRhythmCarriesAcrossARest() throws {
+        let notes = try firstMeasure("A>z B2 c2 d2|")
+        #expect(notes.map(\.duration) == [0.75, 0.25, 1.0, 1.0, 1.0])
+    }
+
+    @Test func brokenRhythmBarAddsUpToTheMeter() throws {
+        let notes = try firstMeasure("A>B c>d e>f g>a|")
+        #expect(notes.reduce(0) { $0 + $1.duration } == 4.0)
+    }
 }
