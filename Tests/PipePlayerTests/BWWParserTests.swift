@@ -357,6 +357,9 @@ struct BWWParserTests {
         let tune = try BWWParser.parse(slowAir)
         #expect(tune.timeSignature == "6/8")
         #expect(tune.tempo == 60)
+        // The display divides by whatever scale was actually applied — an
+        // unscaled air must show 60, not 60 ÷ 1.5 = 40.
+        #expect(tune.tempoScaleFactor == 1)
     }
 
     @Test func lamentInCompoundTimeIsNotScaled() throws {
@@ -372,5 +375,44 @@ struct BWWParserTests {
         """
         let tune = try BWWParser.parse(lament)
         #expect(tune.tempo == 55)
+    }
+
+    private func firstMeasureDurations(_ body: String) throws -> [Double] {
+        let tune = try BWWParser.parse("""
+        Bagpipe Music Writer Gold:1.0
+
+        "Test Strathspey",(T,L,10,10,Times New Roman,14,0)
+        & sharpf sharpc C I!''
+        \(body) ''!I
+        """)
+        return tune.parts[0].measures[0].notes.map(\.duration)
+    }
+
+    @Test func trailingTripletMarkerScalesThePrecedingThreeNotes() throws {
+        // Real strathspey ("The Smith's A Gallant Fireman"): `^3hg` trails
+        // E F HG and makes them a triplet — one beat, not one and a half.
+        let durations = try firstMeasureDurations("gg F_4 gg Er_8 Fr_8 HGl_8 ^3hg")
+        #expect(durations[0] == 1.0)
+        #expect(durations.dropFirst().allSatisfy { abs($0 - 1.0 / 3.0) < 0.0001 })
+        #expect(abs(durations.reduce(0, +) - 2.0) < 0.0001)
+    }
+
+    @Test func bracketedTripletScalesTheNotesInside() throws {
+        let durations = try firstMeasureDurations("^3s LA_8 B_8 C_8 ^3e D_4")
+        #expect(durations.prefix(3).allSatisfy { abs($0 - 1.0 / 3.0) < 0.0001 })
+        #expect(durations[3] == 1.0)
+    }
+
+    @Test func caretThreeEWithNoOpenBracketIsAnOldStyleTripletOnE() throws {
+        // `^3e` doubles as the new-style bracket close and the old-style
+        // marker for a triplet ending on E — with no bracket open, it's the
+        // latter.
+        let durations = try firstMeasureDurations("C_8 D_8 E_8 ^3e")
+        #expect(durations.allSatisfy { abs($0 - 1.0 / 3.0) < 0.0001 })
+    }
+
+    @Test func trailingDupletMarkerStretchesThePrecedingTwoNotes() throws {
+        let durations = try firstMeasureDurations("LA_8 B_8 ^2b")
+        #expect(durations.allSatisfy { abs($0 - 0.75) < 0.0001 })
     }
 }

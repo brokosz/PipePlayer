@@ -105,7 +105,7 @@ struct Measure: Equatable, Codable {
 /// explicit tempo of its own (BWW's `TuneTempo` record, ABC's `Q:` field).
 /// Matched case-insensitively against BWW's free-text "Y" (tune type) record
 /// or ABC's "R:" (rhythm) field.
-enum TuneRhythm: String, CaseIterable {
+enum TuneRhythm: String, CaseIterable, Codable {
     case march, strathspey, reel, hornpipe, jig
 
     var defaultTempo: Double {
@@ -155,6 +155,10 @@ enum TuneRhythm: String, CaseIterable {
 struct TunePart: Equatable, Codable {
     var measures: [Measure]
     var hasRepeat: Bool = false
+    /// Overrides `Tune.rhythm` for this part — set when one file holds a
+    /// whole set (an ABC file with several `X:` tunes), so a strathspey
+    /// followed by a reel gets interpreted as each, not as one or the other.
+    var rhythm: TuneRhythm? = nil
 }
 
 struct Tune: Equatable, Codable {
@@ -165,6 +169,17 @@ struct Tune: Equatable, Codable {
     /// e.g. "2/4", "6/8", "4/4".
     var timeSignature: String
     var parts: [TunePart]
+    /// The dance type, when the source file says (BWW's "Y" record, ABC's
+    /// `R:`) — drives both the default tempo at parse time and how the
+    /// tune is interpreted at playback (`PerformanceStyle`).
+    var rhythm: TuneRhythm? = nil
+    /// What the parser multiplied the file's stated tempo by to get `tempo`
+    /// in quarter notes per minute — 2 for a cut-time reel stated at the
+    /// half note, 1.5 for a jig stated at the dotted quarter, 1 for most
+    /// else. Recorded by the parser rather than re-derived from the meter
+    /// downstream, since only the parser knows when it *didn't* scale (a
+    /// slow air in 6/8 is stated at the plain beat).
+    var tempoScaleFactor: Double = 1.0
 
     static let empty = Tune(title: "Untitled", composer: nil, tempo: 90, timeSignature: "2/4", parts: [])
 }

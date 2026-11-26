@@ -35,27 +35,46 @@ private struct AppMenuCommands: View {
         .keyboardShortcut("n", modifiers: .command)
 
         Button("Open…") {
-            appState?.presentOpenPanel()
+            if let appState {
+                appState.presentOpenPanel()
+            } else if let url = AppState.chooseTuneFile() {
+                openInNewWindow(url)
+            }
         }
         .keyboardShortcut("o", modifiers: .command)
-        .disabled(appState == nil)
 
         Menu("Open Recent") {
-            if let appState, !appState.recentURLs.isEmpty {
-                ForEach(appState.recentURLs, id: \.self) { url in
+            let recents = appState?.recentURLs ?? AppState.storedRecentURLs()
+            if recents.isEmpty {
+                Button("No Recent Files") {}
+                    .disabled(true)
+            } else {
+                ForEach(recents, id: \.self) { url in
                     Button(url.lastPathComponent) {
-                        appState.open(url: url)
+                        if let appState {
+                            appState.open(url: url)
+                        } else {
+                            openInNewWindow(url)
+                        }
                     }
                 }
                 Divider()
                 Button("Clear Menu") {
-                    appState.clearRecents()
+                    if let appState {
+                        appState.clearRecents()
+                    } else {
+                        AppState.clearStoredRecents()
+                    }
                 }
-            } else {
-                Button("No Recent Files") {}
-                    .disabled(true)
             }
         }
+    }
+
+    /// With no window open there's no AppState to load into, so open a
+    /// window for the file — it picks the URL up on appear.
+    private func openInNewWindow(_ url: URL) {
+        PendingTuneOpens.shared.enqueue(url)
+        openWindow(id: "main")
     }
 }
 

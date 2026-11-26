@@ -2,6 +2,23 @@ import Foundation
 import AppKit
 import UniformTypeIdentifiers
 
+/// Files picked from the File menu while no window was open, waiting for
+/// the window opened for them to claim one. SwiftUI's `openWindow(id:)`
+/// can't hand a value to the new window directly (that would need a
+/// value-typed `WindowGroup`), so the menu command parks the URL here and
+/// the new window's `ContentView` takes it on appear.
+@MainActor
+final class PendingTuneOpens {
+    static let shared = PendingTuneOpens()
+    private var urls: [URL] = []
+
+    func enqueue(_ url: URL) { urls.append(url) }
+
+    func takeNext() -> URL? {
+        urls.isEmpty ? nil : urls.removeFirst()
+    }
+}
+
 /// Owns the currently-loaded tune, the shared `PlaybackEngine`, and the
 /// recent-files list — shared between `ContentView` and the File menu
 /// commands (which live at the Scene level, outside the view hierarchy, so
@@ -11,6 +28,9 @@ final class AppState: ObservableObject {
     @Published private(set) var voices: [Voice] = []
     @Published var errorMessage: String?
     @Published private(set) var recentURLs: [URL] = []
+    /// The file this window's tune came from — what `ContentView` persists
+    /// so the tab can reopen it after a relaunch.
+    @Published private(set) var currentURL: URL?
 
     /// The primary voice's tune — drives the window title. For a multi-voice
     /// MusicXML harmony arrangement this is the first `<part>` (conventionally
@@ -35,7 +55,7 @@ final class AppState: ObservableObject {
     // lifetime — see NowPlayingController.
     private var nowPlayingController: NowPlayingController?
 
-    private let recentsDefaultsKey = "PipePlayer.recentFileURLs"
+    private static let recentsDefaultsKey = "PipePlayer.recentFileURLs"
     private let maxRecents = 10
 
     init() {
@@ -44,23 +64,34 @@ final class AppState: ObservableObject {
     }
 
     func presentOpenPanel() {
+        guard let url = Self.chooseTuneFile() else { return }
+        open(url: url)
+    }
+
+    /// Static so File → Open works with no window open at all — there's no
+    /// AppState to call `presentOpenPanel` on until a window exists.
+    static func chooseTuneFile() -> URL? {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = TuneFileLoader.supportedExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        open(url: url)
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
 
-    func open(url: URL) {
+    /// `addToRecents: false` is for restoring a tab's tune on relaunch —
+    /// reopening every restored tab shouldn't reshuffle Open Recent into
+    /// whatever order the windows happened to come back in.
+    func open(url: URL, addToRecents: Bool = true) {
         do {
             let loadedVoices = try TuneFileLoader.loadVoices(from: url)
             let alignedVoices = VoiceAligner.align(loadedVoices)
             voices = alignedVoices
             progressTune = alignedVoices.first.map { EmbellishmentExpander.expand(tune: $0.tune) }
             engine.load(voices: alignedVoices)
-            addRecent(url)
+            currentURL = url
+            if addToRecents { addRecent(url) }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -70,6 +101,7 @@ final class AppState: ObservableObject {
         engine.stop()
         voices = []
         progressTune = nil
+        currentURL = nil
     }
 
     // MARK: - Recents
@@ -90,13 +122,23 @@ final class AppState: ObservableObject {
     }
 
     private func loadRecents() {
-        guard let paths = UserDefaults.standard.array(forKey: recentsDefaultsKey) as? [String] else { return }
-        recentURLs = paths
+        recentURLs = Self.storedRecentURLs()
+    }
+
+    /// Read straight from defaults so Open Recent still works with no
+    /// window (and so no AppState) open.
+    static func storedRecentURLs() -> [URL] {
+        guard let paths = UserDefaults.standard.array(forKey: recentsDefaultsKey) as? [String] else { return [] }
+        return paths
             .map { URL(fileURLWithPath: $0) }
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    static func clearStoredRecents() {
+        UserDefaults.standard.removeObject(forKey: recentsDefaultsKey)
+    }
+
     private func saveRecents() {
-        UserDefaults.standard.set(recentURLs.map(\.path), forKey: recentsDefaultsKey)
+        UserDefaults.standard.set(recentURLs.map(\.path), forKey: Self.recentsDefaultsKey)
     }
 }

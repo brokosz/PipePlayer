@@ -76,6 +76,9 @@ enum BWWParser {
         var pendingEmbellishment: Embellishment?
         var pendingEndingNumber: Int?
         var pendingTieStart = false
+        // Duration scale for notes inside an open `^3s`…`^3e`-style
+        // bracket (nil when none is open) — applied as each note arrives.
+        var openTupletRatio: Double?
 
         var parts: [TunePart] = []
         var currentMeasures: [Measure] = []
@@ -95,6 +98,26 @@ enum BWWParser {
                 currentNotes.removeAll()
                 currentMeasureEndingNumbers.removeAll()
             }
+        }
+        // Old-style tuplet markers trail the notes they cover, so they scale
+        // retroactively — walking back into the last flushed measure if the
+        // group happens to straddle a barline.
+        func scaleLastNotes(_ count: Int, by ratio: Double) {
+            var remaining = count
+            var i = currentNotes.count - 1
+            while remaining > 0 && i >= 0 {
+                currentNotes[i].duration *= ratio
+                remaining -= 1
+                i -= 1
+            }
+            guard remaining > 0, var lastMeasure = currentMeasures.last else { return }
+            var j = lastMeasure.notes.count - 1
+            while remaining > 0 && j >= 0 {
+                lastMeasure.notes[j].duration *= ratio
+                remaining -= 1
+                j -= 1
+            }
+            currentMeasures[currentMeasures.count - 1] = lastMeasure
         }
         func flushPart() {
             flushMeasure()
@@ -147,7 +170,7 @@ enum BWWParser {
                 continue // key signature markers — the fixed chanter scale already bakes these in
 
             case .pitch(let pitch, let duration):
-                var note = NoteEvent(pitch: pitch, duration: duration ?? (currentNotes.last?.duration ?? 0.5))
+                var note = NoteEvent(pitch: pitch, duration: (duration ?? (currentNotes.last?.duration ?? 0.5)) * (openTupletRatio ?? 1))
                 if let emb = pendingEmbellishment {
                     note.embellishment = emb
                     pendingEmbellishment = nil
@@ -169,7 +192,20 @@ enum BWWParser {
                 currentNotes.append(note)
 
             case .rest(let duration):
-                currentNotes.append(NoteEvent(pitch: .lowA, duration: duration, embellishment: nil, isRest: true))
+                currentNotes.append(NoteEvent(pitch: .lowA, duration: duration * (openTupletRatio ?? 1), embellishment: nil, isRest: true))
+
+            case .tupletStart(let ratio):
+                openTupletRatio = ratio
+
+            case .tupletClose(let noteCount, let ratio):
+                // `^3e` is both the new-style bracket close *and* the
+                // old-style trailing marker for a triplet ending on E, so
+                // which one it is depends on whether a bracket is open.
+                if openTupletRatio != nil {
+                    openTupletRatio = nil
+                } else {
+                    scaleLastNotes(noteCount, by: ratio)
+                }
 
             case .dotMarker(let count):
                 // A dot token follows the note it modifies, ×1.5 for one dot
@@ -263,7 +299,7 @@ enum BWWParser {
         let scaleFactor = isFreeTempo ? 1.0 : Self.tempoScaleFactor(forTimeSignature: timeSignature)
         let tempo = baseTempo * scaleFactor
 
-        return Tune(title: title, composer: composer, tempo: tempo, timeSignature: timeSignature, parts: parts)
+        return Tune(title: title, composer: composer, tempo: tempo, timeSignature: timeSignature, parts: parts, rhythm: rhythm, tempoScaleFactor: scaleFactor)
     }
 
     /// How many quarter notes long the meter's own natural tempo-marking
@@ -312,6 +348,13 @@ enum BWWParser {
         /// that starts a tie, `^te` follows the note that resolves it.
         case tieStart
         case tieEnd
+        /// `^3s`-style: opens a tuplet bracket; notes until the close are
+        /// scaled by `ratio` as they arrive.
+        case tupletStart(ratio: Double)
+        /// `^3e` (bracket close) or `^3<pitch>` (old style, trailing the
+        /// last of `noteCount` notes) — see the `.tupletClose` handling for
+        /// how the two are told apart.
+        case tupletClose(noteCount: Int, ratio: Double)
         case embellishment(Embellishment)
         case bar
         /// `I!''` — heavy barline + repeat start.
@@ -485,6 +528,9 @@ enum BWWParser {
         if word == "^te" {
             return [.tieEnd]
         }
+        if let tuplet = tupletToken(word) {
+            return [tuplet]
+        }
         // Dot marker: `'<pitch>` (one dot) / `''<pitch>` (two dots) — the
         // pitch suffix is a rendering detail the real parser doesn't
         // cross-check against the preceding note, so it's enough to confirm
@@ -496,6 +542,43 @@ enum BWWParser {
             return [.dotMarker(count: 1)]
         }
         return [classifyMusicalWord(word)]
+    }
+
+    /// BWW tuplets come in two styles: the newer bracket (`^3s` … `^3e`)
+    /// and the older trailing marker (`^3hg`, placed after the last note,
+    /// naming its pitch). A single digit is the common case — `^2` duplet
+    /// (2 in the time of 3), `^3` triplet (3 in the time of 2); two digits
+    /// read "N in the time of M" (`^43` = 4 in the time of 3). Previously
+    /// unrecognized entirely, so a strathspey's triplet run played at full
+    /// written length — half a beat too long per triplet.
+    private static func tupletToken(_ word: String) -> Token? {
+        guard word.hasPrefix("^") else { return nil }
+        let body = word.dropFirst()
+        let digits = Array(body.prefix(while: \.isNumber))
+        let suffix = String(body.dropFirst(digits.count))
+        let count: Int
+        let inTimeOf: Int
+        switch digits.count {
+        case 1:
+            switch digits[0] {
+            case "2": (count, inTimeOf) = (2, 3)
+            case "3": (count, inTimeOf) = (3, 2)
+            default: return nil
+            }
+        case 2:
+            guard let n = Int(String(digits[0])), let m = Int(String(digits[1])), n > 0, m > 0 else { return nil }
+            (count, inTimeOf) = (n, m)
+        default:
+            return nil
+        }
+        let ratio = Double(inTimeOf) / Double(count)
+        if suffix == "s" {
+            return .tupletStart(ratio: ratio)
+        }
+        if suffix == "e" || pitch(fromAbbreviation: suffix) != nil {
+            return .tupletClose(noteCount: count, ratio: ratio)
+        }
+        return nil
     }
 
     private static func pitch(fromAbbreviation abbrev: String) -> Pitch? {

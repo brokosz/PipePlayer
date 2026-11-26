@@ -29,7 +29,7 @@ enum MIDIEventBuilder {
     ///   tune's own tempo (for the UI's tempo slider); pass nil to use the
     ///   tune's tempo as parsed.
     static func buildEvents(for tune: Tune, tempoOverride: Double? = nil) -> [ScheduledMIDIEvent] {
-        let expanded = EmbellishmentExpander.expand(tune: tune)
+        let expanded = EmbellishmentExpander.expand(tune: PerformanceStyle.apply(to: tune))
         let bpm = tempoOverride ?? expanded.tempo
         let secondsPerBeat = 60.0 / max(bpm, 1)
 

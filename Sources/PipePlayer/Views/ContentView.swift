@@ -13,6 +13,12 @@ struct ContentView: View {
     @StateObject private var appState: AppState
     @ObservedObject private var engine: PlaybackEngine
     @State private var isTargetedForDrop = false
+    // Per-window, saved and restored by SwiftUI alongside the window itself
+    // — the same mechanism that already brings tabs back on relaunch.
+    // Without it, every restored tab came back with a fresh, empty AppState.
+    // A bookmark rather than a path, so a tune moved or renamed in the
+    // meantime still reopens.
+    @SceneStorage("PipePlayer.tuneBookmark") private var tuneBookmark: Data?
 
     init() {
         let state = AppState()
@@ -51,6 +57,24 @@ struct ContentView: View {
             // without quitting the app — playback should stop right along
             // with it rather than keep running with no window to control it.
             engine.stop()
+        }
+        .onAppear {
+            // A window opened from File → Open with nothing else open is
+            // here to show that file; otherwise it may be a restored tab.
+            if let url = PendingTuneOpens.shared.takeNext() {
+                appState.open(url: url)
+            } else {
+                restoreTuneIfNeeded()
+            }
+        }
+        .onChange(of: tuneBookmark) { _ in
+            // SwiftUI delivers a restored tab's scene storage a beat *after*
+            // `onAppear` (observed ~200ms on relaunch), so the check there
+            // alone always saw nil. This is where restoration actually lands.
+            restoreTuneIfNeeded()
+        }
+        .onChange(of: appState.currentURL) { url in
+            tuneBookmark = url.flatMap { try? $0.bookmarkData() }
         }
         .onOpenURL { url in
             // Finder's "Open With"/double-click and the custom document-type
@@ -114,6 +138,46 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.accentColor, lineWidth: 3)
         }
+    }
+
+    /// A bookmark that no longer resolves means the file is gone — the tab
+    /// just comes back empty rather than greeting a relaunch with an error.
+    /// One that resolves but fails to parse still alerts, since that's a
+    /// real problem with the file, not a missing one. A stale bookmark gets
+    /// refreshed automatically once `open` updates `currentURL`.
+    ///
+    /// If a file already landed in this tab before the restored value
+    /// arrived (Finder double-click on a relaunching app), the late restore
+    /// would clobber the bookmark with the tab's *previous* tune — so put
+    /// back the one actually showing instead.
+    private func restoreTuneIfNeeded() {
+        guard let bookmark = tuneBookmark else { return }
+        var isStale = false
+        let url = try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
+        if let current = appState.currentURL {
+            if !(url.map { Self.isSameFile($0, current) } ?? false) {
+                tuneBookmark = try? current.bookmarkData()
+            }
+            return
+        }
+        guard appState.tune == nil else { return }
+        guard let url else {
+            tuneBookmark = nil
+            return
+        }
+        appState.open(url: url, addToRecents: false)
+    }
+
+    /// By file identity, not path string — a resolved bookmark can come
+    /// back spelled differently (symlinks, case) than the URL it was made
+    /// from, and a path compare would rewrite the bookmark forever.
+    private static func isSameFile(_ a: URL, _ b: URL) -> Bool {
+        let key: Set<URLResourceKey> = [.fileResourceIdentifierKey]
+        if let idA = try? a.resourceValues(forKeys: key).fileResourceIdentifier,
+           let idB = try? b.resourceValues(forKeys: key).fileResourceIdentifier {
+            return idA.isEqual(idB)
+        }
+        return a.resolvingSymlinksInPath().path == b.resolvingSymlinksInPath().path
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {

@@ -86,6 +86,20 @@ commit list underneath, which is fine as a supplement, not a replacement.
   because it happens to be written in 6/8. When no tempo is stated at all,
   the tune type (march, strathspey, reel, hornpipe, jig) picks a sensible
   default instead of a single flat number for every dance.
+- Strathspeys are pointed at playback, not played as written. Written
+  strathspey rhythm is dot-cut (3:1) and its reverse, the Scotch snap;
+  rendered literally it reads as a lazy swing. `PerformanceStyle` tightens
+  each adjacent 3:1 pair to 5:1 just before events are built, so live
+  playback, export, and the progress bar all hear the same thing. Pair
+  totals are preserved, so the beat never moves. It never inserts silence
+  between notes — a chanter can't stop sounding, and an earlier version
+  that detached notes that way sounded wrong immediately.
+- An ABC file can hold a whole set: several `X:` tunes back to back, each
+  with its own header. They're combined into one playable tune, each at its
+  own tempo (later tunes' durations are stretched relative to the first),
+  so the tempo control scales the whole set together the way a band speeds
+  up a medley. Each part keeps its own tune type (`R:`), so a strathspey
+  followed by a reel is pointed as one and played straight as the other.
 - ABC and BWW/BMW are single-voice only — the grammar itself has no notion of
   multiple simultaneous parts, so every file loads as one "Melody" voice.
   Multi-voice simultaneous playback (see below) is a MusicXML-only feature.
