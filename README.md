@@ -1,90 +1,71 @@
 # PipePlayer
 
-A free Mac app that plays your bagpipe tune files out loud — no pipes, no
-practice chanter, no other app required.
+A free Mac app that plays bagpipe tune files out loud. No pipes or practice
+chanter needed.
 
-If you've got tunes saved from **Bagpipe Music Writer**, **Bagpipe
-Musicworks Gold**, **Bagpipe Reader**, **Ensemble**, or any notation program
-that can export **MusicXML**, PipePlayer opens them and plays them back with
-real grace notes, doublings, throws, and the rest of Highland piping's
-ornamentation — not a flattened, robotic version of the tune.
+It opens tunes from **Bagpipe Music Writer**, **Bagpipe Musicworks Gold**,
+**Bagpipe Reader**, **Ensemble**, or anything that exports **MusicXML**, and
+plays them with the grace notes, doublings, throws, and other Highland
+ornamentation intact.
 
 ## Why
 
-Tune collections pile up as files — `.bww`, `.bmw`, `.abc`, `.musicxml` — and
-most of them are silent until you sit down with pipes or a chanter and work
-them out. PipePlayer just plays them, so you can hear a tune before you
-learn it, check a transcription for mistakes, or send someone a recording
-without picking up an instrument.
+Tune collections pile up as `.bww`, `.bmw`, `.abc`, and `.musicxml` files,
+and they stay silent until you sit down with an instrument and work them
+out. PipePlayer plays them so you can hear a tune before learning it, check
+a transcription for mistakes, or send someone a recording.
 
 ## What it does
 
-- **Opens ABC, BWW/BMW, and MusicXML tune files** (`.abc`, `.bww`, `.bmw`,
-  `.musicxml`, `.xml`, `.mxl`) — the common formats Highland piping software
-  actually saves in
-- **Plays the ornamentation properly.** Doublings, throws, grips,
-  taorluath, birl, strikes, crunluath — the grace notes that make a tune
-  sound like piping and not a music box — are expanded from a real
-  reference table, not guessed at
-- **Multiple tunes open at once**, each in its own tab, each independent —
-  switch between them freely, and starting one stops whichever other tab
-  was playing, so you're never listening to two at once by accident
-- **A real transport**: play, pause, seek, adjustable tempo and volume,
-  looping, and an optional continuous drone underneath the melody
-- **Harmony arrangements** (a MusicXML file with a melody and one or more
-  harmony parts) play together, with a mute checkbox per part so you can
-  solo or drop any of them
-- **Export to an audio file** (WAV, AAC, or MP4) using whatever instrument
-  and settings you've got dialed in — share a tune as a real audio file, no
-  screen recording required
-- **Choose the sound**: Apple's built-in instrument bank, any SoundFont file
-  you supply, or any other virtual instrument installed on your Mac
-- **Send MIDI to another app** — PipePlayer can act as a MIDI source for a
-  DAW, notation program, or hardware synth, playing along in exact sync
+- Opens `.abc`, `.bww`, `.bmw`, `.musicxml`, `.xml`, and `.mxl` files
+- Plays ornaments from a reference table of what pipers actually play:
+  doublings, throws, grips, taorluath, birls, strikes, crunluath
+- One tab per tune. Starting playback in one tab stops the others
+- Play, pause, seek, tempo, volume, looping, and an optional drone
+- MusicXML harmony arrangements play all parts together, with a mute
+  checkbox per part
+- Exports to WAV, AAC, or MP4 using your current instrument and settings
+- Uses Apple's built-in instrument bank, a SoundFont you supply, or any
+  virtual instrument installed on your Mac
+- Can act as a MIDI source for a DAW, notation app, or hardware synth,
+  in sync with playback
 
 ## Getting it
 
 Download the latest build from the
 [Releases page](https://github.com/brokosz/PipePlayer/releases/latest) and
-drag `PipePlayer.app` into your Applications folder.
+drag `PipePlayer.app` into Applications.
 
-Since this isn't distributed through the Mac App Store, the first time you
-open it macOS will warn you it's from an unidentified developer. Right-click
-(or Control-click) the app and choose **Open** — you'll only need to do this
-once.
+It's not from the App Store, so the first launch gets an "unidentified
+developer" warning. Control-click the app and choose **Open**. You only have
+to do this once.
 
 ## Using it
 
-Open a tune file (**File → Open…**, or just drag it onto the window) and
-press play. From there:
+Open a tune (**File → Open…** or drag it onto the window) and press play.
 
-- The bar across the top shows each part of the tune and highlights where
-  you are — click any part to jump straight to it
-- Drag the tempo, volume, and other controls to taste; none of it affects
-  the file itself, just how it plays back
-- Strathspeys are played pointed, the way a piper plays them, rather than
-  with the lazy swing of the rhythm as literally written
-- Opening another tune puts it in a new tab, so you can compare two
-  arrangements or queue up a set — open or drop several at once and each
-  gets its own. Opening one that's already open just switches to its tab
-- Quit and come back later: your tabs reopen with the same tunes, at the
-  same tempo, with the same voices muted
-- When it sounds the way you want, use the export button (⬆) to save it as
-  an audio file
+- The bar across the top shows each part of the tune and where you are.
+  Click a part to jump to it
+- Tempo, volume, and the other controls change playback only. The file is
+  never modified
+- Strathspeys are played pointed, the way a piper plays them, instead of
+  the softer swing of the written rhythm
+- Each tune opens in its own tab. Open or drop several at once to queue up
+  a set. Opening a tune that's already open switches to its tab
+- Tabs come back after you quit, with the same tempo and muted voices
+- The export button (⬆) saves what you're hearing as an audio file
 
 ## Privacy
 
-PipePlayer doesn't collect or send anything anywhere. It reads the file you
-open and plays it through your Mac's speakers — that's it. No account, no
-analytics, no network access. The only thing it remembers between launches
-is your recent-files list, kept entirely on your own machine.
+PipePlayer collects nothing and has no network access. No account, no
+analytics. It remembers your recent files and open tabs between launches,
+stored locally on your Mac.
 
 ## For developers
 
-Building from source, the parser/playback internals, and notes on how
-specific file-format quirks are handled all live in
+Build instructions, internals, and file-format notes are in
 [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
