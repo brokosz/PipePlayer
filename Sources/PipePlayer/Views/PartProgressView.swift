@@ -80,9 +80,11 @@ struct PartProgressView: View {
                     .fill(isActive ? Color.accentColor : Color.secondary.opacity(0.45))
                     .frame(width: inner.size.width * progress)
             }
+            // White only once the fill has reached the label — before that
+            // it sits on the empty track, where white all but disappears.
             Text("\(part.partIndex + 1)")
                 .font(.caption2.bold())
-                .foregroundStyle(isActive ? .white : .secondary)
+                .foregroundStyle(isActive && progress * width > 24 ? Color.white : isActive ? Color.accentColor : Color.secondary)
                 .padding(.leading, 6)
         }
         .frame(width: max(0, width))
