@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-release:
-    runs-on: macos-14
+    runs-on: macos-15
     # softprops/action-gh-release needs contents:write to create the release
     # and upload assets. Newer repos default GITHUB_TOKEN to read-only, which
     # would silently 403 here without this — the repo's own "Workflow
@@ -19,11 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 16.2
-        # The runner's default Xcode (15.4) ships Swift 5.10; Package.swift
-        # requires tools-version 6.0, which needs Xcode 16+. 16.2 is
-        # installed alongside the default on macos-14, just not selected.
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+      # macos-15's default Xcode (16.x) ships Swift 6, which Package.swift's
+      # tools-version 6.0 needs. macos-14 was retired, cancelling every job.
 
       - name: Run tests
         run: swift test
