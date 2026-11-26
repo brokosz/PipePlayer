@@ -17,8 +17,8 @@ struct ScheduledMIDIEvent: Equatable {
     var channel: UInt8 = 0
 }
 
-/// Walks a `Tune` in play order — unrolling repeats and first/second endings —
-/// and produces one flat, time-sorted list of note on/off events. This flat
+/// Walks a `Tune` in play order (`PlayOrder`: repeats unrolled, first/second
+/// endings picked per pass) and produces one flat, time-sorted list of note on/off events. This flat
 /// list is the single source of truth that both the local sampler and the
 /// MIDI-out path consume, so they can never drift relative to each other.
 enum MIDIEventBuilder {
@@ -51,34 +51,28 @@ enum MIDIEventBuilder {
             }
         }
 
-        for part in expanded.parts {
-            let passes = part.hasRepeat ? [1, 2] : [1]
-            for pass in passes {
-                for measure in part.measures {
-                    if !measure.endingNumbers.isEmpty && !measure.endingNumbers.contains(pass) {
-                        continue // e.g. skip a first-ending measure on the repeat pass
-                    }
-                    for note in measure.notes {
-                        let durationSeconds = note.duration * secondsPerBeat * (note.isDotted ? 1.5 : 1.0)
-                        if note.isRest {
+        for pass in PlayOrder.passes(of: expanded) {
+            for measure in pass.measures {
+                for note in measure.notes {
+                    let durationSeconds = PlayOrder.beats(of: note) * secondsPerBeat
+                    if note.isRest {
+                        closeOpenNote(at: cursor)
+                    } else {
+                        let pitch = UInt8(note.pitch.rawValue)
+                        if openNotePitch != pitch {
+                            // Not a continuation of an open tie (either
+                            // nothing was open, or the parser's tie
+                            // pitches didn't actually match — defensively
+                            // close the stale one and start fresh).
                             closeOpenNote(at: cursor)
-                        } else {
-                            let pitch = UInt8(note.pitch.rawValue)
-                            if openNotePitch != pitch {
-                                // Not a continuation of an open tie (either
-                                // nothing was open, or the parser's tie
-                                // pitches didn't actually match — defensively
-                                // close the stale one and start fresh).
-                                closeOpenNote(at: cursor)
-                                events.append(ScheduledMIDIEvent(time: cursor, kind: .noteOn, note: pitch, velocity: defaultVelocity))
-                                openNotePitch = pitch
-                            }
-                            if !note.isTiedToNext {
-                                closeOpenNote(at: cursor + durationSeconds)
-                            }
+                            events.append(ScheduledMIDIEvent(time: cursor, kind: .noteOn, note: pitch, velocity: defaultVelocity))
+                            openNotePitch = pitch
                         }
-                        cursor += durationSeconds
+                        if !note.isTiedToNext {
+                            closeOpenNote(at: cursor + durationSeconds)
+                        }
                     }
+                    cursor += durationSeconds
                 }
             }
         }

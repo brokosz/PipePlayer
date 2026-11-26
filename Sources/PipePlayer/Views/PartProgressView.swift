@@ -1,21 +1,14 @@
 import SwiftUI
 
-/// A segmented playback-progress view: one bar segment per tune part, sized
-/// proportionally to that part's length and filling in as it plays, with the
-/// currently-playing segment highlighted — replaces an earlier raw
-/// note-by-note text listing, which read too much like looking at the
-/// source file and not enough like watching the tune play.
+/// A segmented playback-progress view: one segment per part as the file
+/// writes it, sized by that part's written length (both endings included)
+/// and filling once per pass as it plays, with the current part highlighted.
 ///
-/// Segment boundaries mirror `MIDIEventBuilder`'s actual play order: a
-/// repeated part counts *twice* toward cumulative time before the next part
-/// starts, matching real playback. An earlier version used each part's
-/// single-pass duration for both the boundary math and the modulo wrap,
-/// which was fine for a non-repeating tune but drifted the highlighted
-/// segment out of sync with the audio the moment any part actually repeated
-/// (i.e. on almost every real tune) — everything after the first repeated
-/// part landed a full pass length off. Endings (1st/2nd) are still not
-/// tracked per-measure here, only in the real event builder — a small
-/// remaining approximation, not the repeat-desync bug this replaces.
+/// All timing comes from `PlayOrder.timeline` — the same play order
+/// `MIDIEventBuilder` schedules audio from — so repeats and first/second
+/// endings land exactly where they're heard. An earlier version did its
+/// own arithmetic, counted every measure on every pass (endings included),
+/// and drifted further from the audio after each part with endings.
 struct PartProgressView: View {
     let tune: Tune
     let currentTime: TimeInterval
@@ -24,73 +17,60 @@ struct PartProgressView: View {
     /// lets the transport seek straight to the beginning of that part.
     var onSeek: (TimeInterval) -> Void = { _ in }
 
-    private struct PartSpan {
-        let index: Int
-        let hasRepeat: Bool
-        let start: TimeInterval
-        let end: TimeInterval
-        let singlePassDuration: TimeInterval
+    private var timeline: [PlayOrder.PartTiming] {
+        PlayOrder.timeline(of: tune, tempo: tempo)
     }
 
-    private var spans: [PartSpan] {
-        let secondsPerBeat = 60.0 / max(tempo, 1)
-        var result: [PartSpan] = []
-        var cursor: TimeInterval = 0
-        for (index, part) in tune.parts.enumerated() {
-            let start = cursor
-            var singlePass: TimeInterval = 0
-            for measure in part.measures {
-                for note in measure.notes {
-                    singlePass += note.duration * secondsPerBeat * (note.isDotted ? 1.5 : 1.0)
-                }
-            }
-            let passCount = part.hasRepeat ? 2.0 : 1.0
-            cursor += singlePass * passCount
-            result.append(PartSpan(index: index, hasRepeat: part.hasRepeat, start: start, end: cursor, singlePassDuration: singlePass))
+    /// The part playing at `time`, or the last one once playback is past
+    /// the end.
+    static func activePart(in timeline: [PlayOrder.PartTiming], at time: TimeInterval) -> PlayOrder.PartTiming? {
+        timeline.first { time >= $0.start && time < $0.end } ?? timeline.last
+    }
+
+    /// Which pass (0-based) of `part` is playing at `time`, and how far
+    /// through it, 0...1. Before the part: (0, 0). After it: last pass, 1.
+    static func passProgress(of part: PlayOrder.PartTiming, at time: TimeInterval) -> (pass: Int, fraction: Double) {
+        guard let first = part.passes.first, let last = part.passes.last else { return (0, 0) }
+        if time < first.lowerBound { return (0, 0) }
+        if time >= last.upperBound { return (part.passes.count - 1, 1) }
+        for (index, range) in part.passes.enumerated() where time < range.upperBound {
+            let length = range.upperBound - range.lowerBound
+            return (index, length > 0 ? (time - range.lowerBound) / length : 1)
         }
-        return result
-    }
-
-    private var activeSpan: PartSpan? {
-        (spans.first { currentTime >= $0.start && currentTime < $0.end }) ?? spans.last
+        return (part.passes.count - 1, 1)
     }
 
     var body: some View {
+        let timeline = self.timeline
+        let totalBeats = timeline.reduce(0) { $0 + $1.writtenBeats }
         VStack(alignment: .leading, spacing: 8) {
             GeometryReader { geo in
-                HStack(spacing: 3) {
-                    ForEach(spans, id: \.index) { span in
-                        segment(for: span, totalWidth: geo.size.width)
+                let spacing: CGFloat = 3
+                let available = max(0, geo.size.width - spacing * CGFloat(max(timeline.count - 1, 0)))
+                HStack(spacing: spacing) {
+                    ForEach(timeline, id: \.partIndex) { part in
+                        let fraction = totalBeats > 0
+                            ? part.writtenBeats / totalBeats
+                            : 1.0 / Double(max(timeline.count, 1))
+                        segment(for: part, width: available * fraction)
                     }
                 }
             }
             .frame(height: 32)
 
-            Text(currentPartDescription)
+            Text(currentPartDescription(timeline))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private func segment(for span: PartSpan, totalWidth: CGFloat) -> some View {
-        let totalSinglePass = spans.reduce(0) { $0 + $1.singlePassDuration }
-        let widthFraction = totalSinglePass > 0
-            ? span.singlePassDuration / totalSinglePass
-            : 1.0 / Double(max(spans.count, 1))
-        let isActive = currentTime >= span.start && currentTime < span.end
-        // Within an active repeated part, wrap progress to each individual
-        // pass (single-pass length) so the segment visibly fills, resets,
-        // and fills again — reflecting that the same material is repeating —
-        // rather than only ever showing the first half full.
-        let progress: Double = {
-            guard span.singlePassDuration > 0 else { return 0 }
-            if currentTime < span.start { return 0 }
-            if currentTime >= span.end { return 1 }
-            let elapsedInSpan = currentTime - span.start
-            let withinPass = elapsedInSpan.truncatingRemainder(dividingBy: span.singlePassDuration)
-            return withinPass / span.singlePassDuration
-        }()
+    private func segment(for part: PlayOrder.PartTiming, width: CGFloat) -> some View {
+        let isActive = currentTime >= part.start && currentTime < part.end
+        // A repeated part fills, resets, and fills again — once per pass —
+        // each pass measured against its own length, since a first and
+        // second ending needn't be the same length.
+        let progress = Self.passProgress(of: part, at: currentTime).fraction
 
         return ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 5)
@@ -100,23 +80,23 @@ struct PartProgressView: View {
                     .fill(isActive ? Color.accentColor : Color.secondary.opacity(0.45))
                     .frame(width: inner.size.width * progress)
             }
-            Text("\(span.index + 1)")
+            Text("\(part.partIndex + 1)")
                 .font(.caption2.bold())
                 .foregroundStyle(isActive ? .white : .secondary)
                 .padding(.leading, 6)
         }
-        .frame(width: max(0, totalWidth * widthFraction))
+        .frame(width: max(0, width))
         .contentShape(Rectangle())
-        .onTapGesture { onSeek(span.start) }
-        .help("Jump to Part \(span.index + 1)")
+        .onTapGesture { onSeek(part.start) }
+        .help("Jump to Part \(part.partIndex + 1)")
     }
 
-    private var currentPartDescription: String {
-        guard let active = activeSpan else { return "" }
-        var description = "Part \(active.index + 1) of \(spans.count)"
+    private func currentPartDescription(_ timeline: [PlayOrder.PartTiming]) -> String {
+        guard let active = Self.activePart(in: timeline, at: currentTime) else { return "" }
+        var description = "Part \(active.partIndex + 1) of \(timeline.count)"
         if active.hasRepeat {
-            let onSecondPass = (currentTime - active.start) >= active.singlePassDuration
-            description += onSecondPass ? " (repeat, 2nd time)" : " (repeat, 1st time)"
+            let pass = Self.passProgress(of: active, at: currentTime).pass
+            description += pass == 0 ? " (repeat, 1st time)" : " (repeat, 2nd time)"
         }
         return description
     }

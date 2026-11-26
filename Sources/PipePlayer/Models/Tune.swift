@@ -182,6 +182,72 @@ struct Tune: Equatable, Codable {
     var tempoScaleFactor: Double = 1.0
 
     static let empty = Tune(title: "Untitled", composer: nil, tempo: 90, timeSignature: "2/4", parts: [])
+
+    /// Every ending fix-up parsers apply, in order.
+    func normalizingEndings() -> Tune {
+        attachingTrailingEndings().droppingUnpairedEndings()
+    }
+
+    /// A second ending with no first ending anywhere in its part isn't an
+    /// alternative to anything — real files use a lone `'22` as a stray
+    /// marker (seen in old BMW exports: one on the second half of a part
+    /// that's plainly played in full both times). Honoured literally, it
+    /// drops half the part from one pass, so it's ignored instead.
+    func droppingUnpairedEndings() -> Tune {
+        var result = self
+        result.parts = parts.map { part in
+            guard !part.measures.contains(where: { $0.endingNumbers.contains(1) }) else { return part }
+            var part = part
+            part.measures = part.measures.map { measure in
+                var measure = measure
+                measure.endingNumbers = []
+                return measure
+            }
+            return part
+        }
+        return result
+    }
+
+    /// Folds a repeat's later endings back into the part they belong to.
+    ///
+    /// Notation writes a second ending *after* the repeat sign (`''!I '2`
+    /// in BWW, a backward repeat then `<ending number="2">` in MusicXML), so
+    /// a parser that closes the part at the repeat sign leaves the second
+    /// ending stranded as a little part of its own. That was wrong twice
+    /// over: the progress bar showed a part the file never has, and
+    /// playback dropped the ending entirely (an ending-2 measure only plays
+    /// on a second pass, and the stranded part had no repeat).
+    ///
+    /// A part with a first ending counts too, even with no repeat sign
+    /// closing it (a first ending closed by a plain part-end barline):
+    /// the second ending arriving is what says it repeats.
+    func attachingTrailingEndings() -> Tune {
+        var merged: [TunePart] = []
+        for part in parts {
+            guard var previous = merged.last,
+                  previous.hasRepeat || previous.measures.contains(where: { $0.endingNumbers.contains(1) })
+            else {
+                merged.append(part)
+                continue
+            }
+            let trailing = part.measures.prefix { measure in
+                !measure.endingNumbers.isEmpty && !measure.endingNumbers.contains(1)
+            }
+            guard !trailing.isEmpty else {
+                merged.append(part)
+                continue
+            }
+            previous.measures.append(contentsOf: trailing)
+            previous.hasRepeat = true
+            merged[merged.count - 1] = previous
+            var rest = part
+            rest.measures.removeFirst(trailing.count)
+            if !rest.measures.isEmpty { merged.append(rest) }
+        }
+        var result = self
+        result.parts = merged
+        return result
+    }
 }
 
 /// One simultaneous melodic line. ABC and BWW/BMW are inherently monophonic

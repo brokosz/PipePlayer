@@ -56,6 +56,49 @@ exports, including some older header variants. Pre-Gold BMW-DOS binary
 files are a different, mostly undocumented format and are rejected with an
 error instead of being mis-parsed.
 
+### Parts, repeats and endings
+
+Parts follow the file's own structure markers, never its layout. The specs
+these were checked against: the
+[BWW format spec](https://github.com/andyrblank/bww-format-spec),
+[ABC 2.1](https://abcnotation.com/wiki/abc:standard:v2.1/), and
+[MusicXML](https://musicxml.formats.music).
+
+- BWW: `''!I` ends a repeat, `!I` ends a part, and `I!''`/`I!` start a
+  repeat. `!`, `!!` and anything ending in `t` are barlines; a staff line
+  break means nothing musically, and a part routinely runs across several
+  lines. `'1`, `'2`, `'22`–`'28` and `'224` are endings (first digit = the
+  time it's played); `'si`, `'do`, `'bis` and `'intro` brackets don't
+  affect playback.
+- Where real files bend those rules, the reading that keeps their intent
+  wins (each case was found in the ~16,800-file collection the parser was
+  checked against):
+  - `!I` inside a repeat that a later `''!I` closes is a heavy barline at
+    a staff line's end, not a part end. So is a bare `I!` inside an open
+    repeat.
+  - A repeat with no `''!I` repeats if it opened with dots (`I!''`); a
+    bare `I! ... !I` is a part written out once. A `''!I` with no start
+    repeats from the start of its part.
+  - A pickup (up to one bar) written before the repeat sign stays with its
+    part but plays the first time only.
+  - A second ending with no first ending in its part is ignored. A first
+    ending closed by `!I` still repeats once its second ending follows.
+- An ending can start mid-bar in real files (Raigmore: `gg LAr_8 gbr LAl_8
+  '1 gg LAr_8 El_8`). The spec says an ending written after a note starts
+  with the next bar, but taken literally that leaves Raigmore's first
+  ending empty. The bar is split at the marker instead, so its common half
+  plays on both passes.
+- A second ending written after the repeat sign (`''!I '2 ...`, or a
+  MusicXML backward repeat followed by `<ending number="2">`) belongs to
+  the repeated part (`Tune.attachingTrailingEndings`). A part with no
+  repeat plays every measure; an ending marker there never silences music.
+- ABC's header `P:` play order (`P:AABB`) isn't applied yet; parts play in
+  the order written.
+- `PlayOrder` is the single walk of the play order. `MIDIEventBuilder`
+  schedules audio from it and `PartProgressView` draws from it, so the
+  progress bar can't drift from what's heard. Segments are sized by
+  written length (both endings counted once) and fill once per pass.
+
 ### Ornaments
 
 The common embellishments are exact: doublings, throws, grips, birls,

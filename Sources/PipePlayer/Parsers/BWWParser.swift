@@ -74,7 +74,7 @@ enum BWWParser {
 
         let tokens = tokenize(text)
         var pendingEmbellishment: Embellishment?
-        var pendingEndingNumber: Int?
+        var pendingEndingNumbers: Set<Int> = []
         var pendingTieStart = false
         // Duration scale for notes inside an open `^3s`…`^3e`-style
         // bracket (nil when none is open) — applied as each note arrives.
@@ -87,10 +87,14 @@ enum BWWParser {
         var partHasRepeat = false
         // A repeat can span multiple `&` systems/lines before it actually
         // closes (confirmed against limepipes-plugin-bww's barline handling
-        // and a real reference tune) — an interior system-end (`!t`/`!I`)
+        // and a real reference tune) — a part-end barline (`!I`) inside it
         // must NOT flush the part while a repeat is still open; only the
         // matching `''!I` close does.
         var repeatIsOpen = false
+        // The open repeat was started with dots (`I!''`), an explicit
+        // repeat sign — as opposed to a bare `I!`, which real files use as
+        // a plain part-opening barline for parts written out once.
+        var repeatOpenedDotted = false
 
         func flushMeasure() {
             if !currentNotes.isEmpty {
@@ -122,13 +126,32 @@ enum BWWParser {
         func flushPart() {
             flushMeasure()
             if !currentMeasures.isEmpty {
-                parts.append(TunePart(measures: currentMeasures, hasRepeat: partHasRepeat))
+                // A repeat whose close is missing (a plain `!I`, or another
+                // start) still repeats when it opened with repeat dots. (A
+                // first ending whose close is missing is handled once the
+                // second ending turns up — see `attachingTrailingEndings`.)
+                parts.append(TunePart(measures: currentMeasures, hasRepeat: partHasRepeat || (repeatIsOpen && repeatOpenedDotted)))
                 currentMeasures.removeAll()
             }
             partHasRepeat = false
+            repeatIsOpen = false
+            repeatOpenedDotted = false
+            // An ending left open by a missing `_'` doesn't leak into the
+            // next part.
+            pendingEndingNumbers.removeAll()
         }
 
-        for token in tokens {
+        /// Whether a `''!I` closes the open repeat before another repeat
+        /// starts — decides whether a `!I` written inside it ends the part.
+        func repeatClosesLater(after index: Int) -> Bool {
+            for token in tokens[(index + 1)...] {
+                if case .repeatClose = token { return true }
+                if case .repeatOpen(let dotted) = token, dotted { return false }
+            }
+            return false
+        }
+
+        for (tokenIndex, token) in tokens.enumerated() {
             switch token {
             case .comment:
                 continue
@@ -175,11 +198,11 @@ enum BWWParser {
                     note.embellishment = emb
                     pendingEmbellishment = nil
                 }
-                if let ending = pendingEndingNumber {
+                if !pendingEndingNumbers.isEmpty {
                     // Stays "sticky" across notes until an explicit .endEnding
                     // token — an ending typically spans a whole measure, not
                     // just the note immediately after the '1/'2 marker.
-                    currentMeasureEndingNumbers.insert(ending)
+                    currentMeasureEndingNumbers.formUnion(pendingEndingNumbers)
                 }
                 if pendingTieStart {
                     // "^ts" precedes the entire note event it starts
@@ -237,30 +260,68 @@ enum BWWParser {
             case .bar:
                 flushMeasure()
 
-            case .repeatOpen:
-                partHasRepeat = true
+            case .repeatOpen(let dotted):
+                // A bare `I!` inside a repeat that's already open is a heavy
+                // barline at the start of a staff line (real files do this
+                // mid-repeat), not a second repeat start.
+                if repeatIsOpen && !dotted {
+                    flushMeasure()
+                    continue
+                }
+                flushMeasure()
+                // A pickup written before the repeat sign (`E_8 I!'' ...`)
+                // leads into the part but sits outside the repeat: it stays
+                // with the part, played the first time through only.
+                // Anything longer than a bar before the sign is a part of
+                // its own — a staff line's end (`!t`) no longer closes one,
+                // so this has to. The part only repeats if a `''!I` closes
+                // it: `I! ... !I` is written out once.
+                var leadIn: Measure?
+                if currentMeasures.count == 1, currentMeasures[0].endingNumbers.isEmpty,
+                   let bar = barBeats(timeSignature),
+                   PlayOrder.beats(of: currentMeasures) <= bar + 0.0001 {
+                    leadIn = currentMeasures.removeLast()
+                    leadIn?.endingNumbers = [1]
+                }
+                flushPart()
+                if let leadIn { currentMeasures.append(leadIn) }
                 repeatIsOpen = true
+                repeatOpenedDotted = dotted
 
             case .repeatClose:
+                // A close with no open repeats from the start of the part.
+                partHasRepeat = true
                 repeatIsOpen = false
+                // A second ending written after this (`''!I '2 ...`) still
+                // belongs to this part — `attachingTrailingEndings` puts it
+                // back once the whole tune is parsed.
                 flushPart()
 
-            case .systemEnd:
-                // A system/staff can end without its repeat (if any) having
-                // closed yet — a repeat routinely spans multiple `&` systems
-                // before the matching `''!I` actually closes it (confirmed
-                // against a real reference tune), so only flush the part here
-                // when no repeat is currently left open.
-                flushMeasure()
-                if !repeatIsOpen {
+            case .partEnd:
+                // "End of a part or of the tune" (spec). Real files also put
+                // `!I` at the end of a staff line in the middle of a repeat
+                // (`I!'' ... !I ... ''!I`) — there it's a heavy barline, and
+                // the part runs on to the `''!I`. A repeat that's never
+                // closed isn't played twice; its `!I` ends the part.
+                if repeatIsOpen && repeatClosesLater(after: tokenIndex) {
+                    flushMeasure()
+                } else {
                     flushPart()
                 }
 
             case .startEnding(let n):
-                pendingEndingNumber = n
+                // An ending can start mid-bar (`gg LAr_8 gbr LAl_8 '1 ...`):
+                // the notes before the marker are played on every pass, so
+                // they can't share a measure — and its ending tag — with the
+                // notes after it. Otherwise the second time through skips
+                // the common half of the bar.
+                if currentMeasureEndingNumbers.isEmpty {
+                    flushMeasure()
+                }
+                pendingEndingNumbers.insert(n)
 
             case .endEnding:
-                pendingEndingNumber = nil
+                pendingEndingNumbers.removeAll()
 
             case .unknown:
                 continue
@@ -300,6 +361,7 @@ enum BWWParser {
         let tempo = baseTempo * scaleFactor
 
         return Tune(title: title, composer: composer, tempo: tempo, timeSignature: timeSignature, parts: parts, rhythm: rhythm, tempoScaleFactor: scaleFactor)
+            .normalizingEndings()
     }
 
     /// How many quarter notes long the meter's own natural tempo-marking
@@ -308,6 +370,17 @@ enum BWWParser {
     /// denominator's value (3 denominator-units); everything else
     /// (including 3/4, which is simple triple, not compound) is marked at a
     /// single denominator-unit.
+    /// One full bar in quarter-note beats, for telling a pickup from a bar.
+    static func barBeats(_ timeSignature: String) -> Double? {
+        switch timeSignature {
+        case "C", "C_", "C|": return 4
+        default:
+            let parts = timeSignature.split(separator: "/").compactMap { Double($0) }
+            guard parts.count == 2, parts[1] > 0 else { return nil }
+            return parts[0] * 4 / parts[1]
+        }
+    }
+
     static func tempoScaleFactor(forTimeSignature timeSignature: String) -> Double {
         let comps = timeSignature.split(separator: "/")
         guard comps.count == 2, let numerator = Double(comps[0]), let denominator = Double(comps[1]), denominator > 0 else {
@@ -357,14 +430,16 @@ enum BWWParser {
         case tupletClose(noteCount: Int, ratio: Double)
         case embellishment(Embellishment)
         case bar
-        /// `I!''` — heavy barline + repeat start.
-        case repeatOpen
-        /// `''!I` — heavy barline + repeat end.
+        /// `I!''` or `I!` — repeat start. `dotted` tells them apart: real
+        /// files also use a bare `I!` as a heavy barline inside a repeat.
+        case repeatOpen(dotted: Bool)
+        /// `''!I` — repeat end; the only sign that makes a part play twice.
         case repeatClose
-        /// `!I` or `!t` — end of a system/staff line, with no repeat
-        /// implied either way (a repeat, if any, may still be open and
-        /// continue into the next system).
-        case systemEnd
+        /// `!I` — end of a part or of the tune (thin-thick barline). (`!t`, the end of a staff
+        /// line, is only a barline: a part routinely runs across several
+        /// lines, and treating every line as a part made the progress bar
+        /// show parts the file doesn't have.)
+        case partEnd
         case startEnding(Int)
         case endEnding
         case unknown(String)
@@ -498,26 +573,33 @@ enum BWWParser {
         if word == "sharpf" || word == "sharpc" {
             return [.signature]
         }
-        // Barline/repeat tokens — exact matches only (not substring
-        // "contains" checks): "I!" (heavy barline, no repeat, no system-end)
-        // is deliberately treated the same as a plain "!" below, since it
-        // doesn't affect playback; "!I" and "!t" both end a system without
-        // implying anything about a repeat one way or the other; only
-        // "I!''"/"''!I" actually open/close a repeat.
-        if word == "!" || word == "I!" {
+        // Barline/repeat tokens, per the BWW format spec (SPEC.md §3.5) —
+        // exact matches only. A trailing "t" also ends the staff line, which
+        // has no musical meaning. Parts follow the file's own part barlines:
+        // "''!I" ends a repeat, "!I" ends a part (or the tune), and
+        // "I!''"/"I!" (same thing) start a repeat. "!"/"!!" are plain
+        // barlines — a part routinely runs across several staff lines.
+        if word == "!" || word == "!t" || word == "!!" || word == "!!t" {
             return [.bar]
         }
-        if word == "I!''" {
-            return [.repeatOpen]
+        if word == "I!''" || word == "I!" {
+            return [.repeatOpen(dotted: word == "I!''")]
         }
-        if word == "''!I" {
+        if word == "''!I" || word == "''!It" {
             return [.repeatClose]
         }
-        if word == "!I" || word == "!t" {
-            return [.systemEnd]
+        if word == "!I" || word == "!It" {
+            return [.partEnd]
         }
-        if word == "'1" || word == "'2" {
-            return Int(word.dropFirst()).map { [.startEnding($0)] } ?? []
+        // Endings (§3.6): "'1", "'2", "'22"–"'28" ("2 of n"), "'224" ("2 and
+        // 4"). The first digit is the time it's played; for three digits
+        // the last is another. "'si"/"'do"/"'bis"/"'intro" brackets don't
+        // change playback and fall through as unknown.
+        if word.count >= 2, word.hasPrefix("'"), word.dropFirst().allSatisfy(\.isNumber) {
+            let digits = word.dropFirst().compactMap(\.wholeNumberValue)
+            var times = [digits[0]]
+            if digits.count >= 3, let last = digits.last { times.append(last) }
+            return times.map { .startEnding($0) }
         }
         if word == "_'" || word == "bis_'" {
             return [.endEnding]

@@ -52,7 +52,9 @@ enum VoiceAligner {
                     }
                     return scaledMeasure
                 }
-                return TunePart(measures: newMeasures, hasRepeat: part.hasRepeat)
+                var aligned = part // keeps hasRepeat and rhythm
+                aligned.measures = newMeasures
+                return aligned
             }
 
             var alignedTune = voice.tune

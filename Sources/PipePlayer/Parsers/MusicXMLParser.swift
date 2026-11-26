@@ -347,7 +347,10 @@ final class MusicXMLParser: NSObject, XMLParserDelegate {
             guard let acc = accumulators[id] else { continue }
             acc.flushPart()
             guard !acc.parts.isEmpty else { continue }
+            // A backward repeat closes the part, so a second ending after
+            // it would otherwise be stranded as its own part.
             let tune = Tune(title: title, composer: composer, tempo: resolvedTempo, timeSignature: timeSignature, parts: acc.parts)
+                .normalizingEndings()
             voices.append(Voice(id: id, name: acc.name, tune: tune))
         }
         guard !voices.isEmpty else { throw MusicXMLParserError.noPartFound }
