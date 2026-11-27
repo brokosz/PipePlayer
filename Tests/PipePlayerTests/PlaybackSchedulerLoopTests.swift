@@ -47,4 +47,23 @@ struct PlaybackSchedulerLoopTests {
         #expect(PlaybackScheduler.loopedTime(elapsed: 3.5, from: 1, loop: 0..<4) == 0.5)
         #expect(PlaybackScheduler.loopedTime(elapsed: 7.5, from: 1, loop: 0..<4) == 0.5)
     }
+
+    /// Event times and part boundaries are summed separately, so they can
+    /// disagree in the last bits (seen in Raigmore: a note-off 2e-14 past
+    /// the part's end). That mustn't drop the part's last note-off or pull
+    /// in the next part's first note-on.
+    @Test func loopSliceToleratesRoundingAtTheEdges() {
+        let events = [on(-1e-12, 60), on(1, 61), off(4 + 1e-12, 61), on(4 - 1e-12, 62)]
+        let slice = PlaybackScheduler.loopSlice(events, 0..<4)
+        #expect(slice.contains(on(-1e-12, 60)))
+        #expect(slice.contains(off(4 + 1e-12, 61)))
+        #expect(!slice.contains(on(4 - 1e-12, 62)))
+    }
+
+    /// Seam cleanup happens when the pass ends, not when its last event
+    /// plays, so a note held into the seam isn't cut short.
+    @Test func passEndIsTheSeam() {
+        #expect(PlaybackScheduler.loopPassEnd(0, from: 1, loop: 0..<4) == 3)
+        #expect(PlaybackScheduler.loopPassEnd(1, from: 1, loop: 0..<4) == 7)
+    }
 }

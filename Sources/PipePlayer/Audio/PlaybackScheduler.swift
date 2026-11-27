@@ -81,8 +81,17 @@ final class PlaybackScheduler: @unchecked Sendable {
             if let loop, isLooping {
                 var pass = 0
                 while play(Self.loopPass(pass, slice: slice, from: startTime, loop: loop), sounding: &sounding) {
-                    // A note still on at the seam (a tie running past the
-                    // part's end) would otherwise hang across the wrap.
+                    // Hold until the seam itself — the pass's last event can
+                    // come well before it — then turn off anything still on
+                    // (a tie running past the part's end), which would
+                    // otherwise hang across the wrap.
+                    let seam = Self.loopPassEnd(pass, from: startTime, loop: loop)
+                    while true {
+                        guard let self, self.isCurrent(myGeneration) else { return }
+                        let remaining = seam - Date().timeIntervalSince(anchor)
+                        if remaining <= 0.002 { break }
+                        Thread.sleep(forTimeInterval: min(remaining, 0.002))
+                    }
                     for key in sounding { onNoteOff(key[0], key[1]) }
                     sounding.removeAll()
                     pass += 1
@@ -105,11 +114,24 @@ final class PlaybackScheduler: @unchecked Sendable {
     /// The events one time round `loop` plays: everything starting inside
     /// it, plus note-offs landing exactly on its end (a note-on there
     /// belongs to whatever follows).
+    ///
+    /// Event times and part boundaries are summed separately and can
+    /// disagree in the last bits, so the edges are compared with a small
+    /// tolerance — far below anything audible.
     static func loopSlice(_ events: [ScheduledMIDIEvent], _ loop: Range<TimeInterval>) -> [ScheduledMIDIEvent] {
-        events.filter { event in
-            (event.time >= loop.lowerBound && event.time < loop.upperBound)
-                || (event.kind == .noteOff && event.time == loop.upperBound)
+        let lower = loop.lowerBound - edgeTolerance
+        let upper = loop.upperBound - edgeTolerance
+        return events.filter { event in
+            (event.time >= lower && event.time < upper)
+                || (event.kind == .noteOff && abs(event.time - loop.upperBound) <= edgeTolerance)
         }
+    }
+
+    static let edgeTolerance: TimeInterval = 1e-6
+
+    /// When pass `pass` reaches the loop's end, in seconds since starting.
+    static func loopPassEnd(_ pass: Int, from startTime: TimeInterval, loop: Range<TimeInterval>) -> TimeInterval {
+        (loop.upperBound - startTime) + Double(pass) * (loop.upperBound - loop.lowerBound)
     }
 
     /// One time round the loop, timed from the moment playback started.
@@ -122,7 +144,7 @@ final class PlaybackScheduler: @unchecked Sendable {
         loop: Range<TimeInterval>
     ) -> [(elapsed: TimeInterval, event: ScheduledMIDIEvent)] {
         if pass == 0 {
-            return slice.filter { $0.time >= startTime }.map { ($0.time - startTime, $0) }
+            return slice.filter { $0.time >= startTime - edgeTolerance }.map { (max(0, $0.time - startTime), $0) }
         }
         let length = loop.upperBound - loop.lowerBound
         let passStart = (loop.upperBound - startTime) + Double(pass - 1) * length
