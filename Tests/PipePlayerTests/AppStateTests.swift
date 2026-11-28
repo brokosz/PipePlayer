@@ -184,3 +184,82 @@ struct TuneOpenerTests {
         #expect(newTabs == 0)
     }
 }
+
+@MainActor
+struct HarmonyTests {
+
+    /// A tune file with a chosen name, in its own folder.
+    static func writeTune(named fileName: String, body: String = "! LA_8 B_8 ''!I") throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(fileName)
+        try """
+        Bagpipe Music Writer Gold:1.0
+
+        "Tune",(T,L,10,10,Times New Roman,14,0)
+        & sharpf sharpc 2_4 I!''
+        \(body)
+        """.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    private func stateWithMelody() throws -> AppState {
+        let state = AppState(recents: AppStateTests.scratchRecents())
+        state.open(url: try Self.writeTune(named: "Tune.bww"))
+        return state
+    }
+
+    @Test func addHarmonyAppendsAVoiceNamedAfterTheFile() throws {
+        let state = try stateWithMelody()
+        state.addHarmony(urls: [try Self.writeTune(named: "Tune - Seconds.bww", body: "! C_8 D_8 ''!I")])
+        #expect(state.voices.count == 2)
+        #expect(state.engine.voices.count == 2)
+        #expect(state.voices[1].name == "Tune - Seconds")
+        #expect(state.isHarmony(state.voices[1].id))
+        #expect(!state.isHarmony(state.voices[0].id))
+    }
+
+    @Test func addingTheSameFileTwiceGivesDistinctIDs() throws {
+        let state = try stateWithMelody()
+        let seconds = try Self.writeTune(named: "Seconds.bww")
+        state.addHarmony(urls: [seconds])
+        state.addHarmony(urls: [seconds])
+        #expect(state.voices.count == 3)
+        #expect(Set(state.voices.map(\.id)).count == 3)
+    }
+
+    @Test func addHarmonyKeepsTempoAndMutes() throws {
+        let state = try stateWithMelody()
+        state.engine.tempo = 70
+        state.engine.setVoiceMuted(id: state.voices[0].id, muted: true)
+        state.addHarmony(urls: [try Self.writeTune(named: "Seconds.bww")])
+        #expect(state.engine.tempo == 70)
+        #expect(state.engine.mutedVoiceIDs.contains(state.voices[0].id))
+    }
+
+    @Test func removeHarmonyRemovesItsVoices() throws {
+        let state = try stateWithMelody()
+        state.addHarmony(urls: [try Self.writeTune(named: "Seconds.bww")])
+        state.removeHarmony(voiceID: state.voices[1].id)
+        #expect(state.voices.count == 1)
+        #expect(state.harmonyURLs.isEmpty)
+    }
+
+    @Test func openingAnotherTuneClearsHarmonies() throws {
+        let state = try stateWithMelody()
+        state.addHarmony(urls: [try Self.writeTune(named: "Seconds.bww")])
+        state.open(url: try Self.writeTune(named: "Other.bww"))
+        #expect(state.voices.count == 1)
+        #expect(state.harmonyURLs.isEmpty)
+    }
+
+    @Test func aHarmonyThatFailsToParseLeavesVoicesAlone() throws {
+        let state = try stateWithMelody()
+        let bad = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        try "nope".write(to: bad, atomically: true, encoding: .utf8)
+        state.addHarmony(urls: [bad])
+        #expect(state.errorMessage != nil)
+        #expect(state.voices.count == 1)
+        #expect(state.harmonyURLs.isEmpty)
+    }
+}

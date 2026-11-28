@@ -86,6 +86,9 @@ final class AppState: ObservableObject {
         do {
             let loadedVoices = try TuneFileLoader.loadVoices(from: url)
             let alignedVoices = VoiceAligner.align(loadedVoices)
+            melodyVoices = alignedVoices
+            harmonies = []
+            nextHarmonyNumber = 0
             voices = alignedVoices
             progressTune = alignedVoices.first.map { EmbellishmentExpander.expand(tune: PerformanceStyle.apply(to: $0.tune)) }
             engine.load(voices: alignedVoices)
@@ -94,6 +97,75 @@ final class AppState: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - Harmony
+
+    /// The tune's own voices, before any added harmony.
+    private var melodyVoices: [Voice] = []
+    /// Harmony files added to this tab, each with the voices it produced.
+    private var harmonies: [(url: URL, voices: [Voice])] = [] {
+        didSet { harmonyURLs = harmonies.map(\.url) }
+    }
+    private var nextHarmonyNumber = 0
+
+    /// The files added as harmony, in order — what `ContentView` persists.
+    @Published private(set) var harmonyURLs: [URL] = []
+
+    /// Adds each file's voices to the tune, fitted to the melody part by
+    /// part (`VoiceAligner.fit`). Playback carries on from the same place,
+    /// at the same tempo, with existing mutes kept. A file that won't load
+    /// is reported and skipped.
+    func addHarmony(urls: [URL]) {
+        guard let melody = melodyVoices.first?.tune else { return }
+        var added = false
+        for url in urls {
+            do {
+                let loaded = try TuneFileLoader.loadVoices(from: url)
+                let fileName = url.deletingPathExtension().lastPathComponent
+                let number = nextHarmonyNumber
+                nextHarmonyNumber += 1
+                let voices = loaded.map { voice in
+                    Voice(
+                        id: "harmony-\(number)-\(voice.id)",
+                        name: loaded.count > 1 ? "\(fileName) – \(voice.name)" : fileName,
+                        tune: VoiceAligner.fit(voice.tune, to: melody)
+                    )
+                }
+                harmonies.append((url, voices))
+                added = true
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+        if added { reloadVoices() }
+    }
+
+    /// Removes the harmony file `voiceID` came from — all of its voices.
+    func removeHarmony(voiceID: String) {
+        guard let index = harmonies.firstIndex(where: { $0.voices.contains { $0.id == voiceID } }) else { return }
+        harmonies.remove(at: index)
+        reloadVoices()
+    }
+
+    func isHarmony(_ voiceID: String) -> Bool {
+        harmonies.contains { $0.voices.contains { $0.id == voiceID } }
+    }
+
+    private func reloadVoices() {
+        let tempo = engine.tempo
+        let mutes = engine.mutedVoiceIDs
+        let time = engine.currentTime
+        let wasPlaying = engine.state == .playing
+        let combined = melodyVoices + harmonies.flatMap(\.voices)
+        voices = combined
+        engine.load(voices: combined)
+        if engine.tempo != tempo { engine.tempo = tempo }
+        for id in mutes where combined.contains(where: { $0.id == id }) {
+            engine.setVoiceMuted(id: id, muted: true)
+        }
+        engine.seek(to: time)
+        if wasPlaying { engine.play() }
     }
 
     // MARK: - Per-tab playback settings
@@ -124,6 +196,8 @@ final class AppState: ObservableObject {
     func closeTune() {
         engine.stop()
         voices = []
+        melodyVoices = []
+        harmonies = []
         progressTune = nil
         currentURL = nil
     }
