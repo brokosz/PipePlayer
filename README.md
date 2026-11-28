@@ -54,8 +54,13 @@ Open a tune (**File → Open…** or drag it onto the window) and press play.
   never modified
 - Strathspeys are played pointed, the way a piper plays them, instead of
   the softer swing of the written rhythm
-- Each tune opens in its own tab. Open or drop several at once to queue up
-  a set. Opening a tune that's already open switches to its tab
+- Each tune opens in its own tab. Opening a tune that's already open
+  switches to its tab
+- **File → New Set** makes a set list: tunes that play straight through,
+  each once, the next coming in on the beat, for an MSR or a few jigs
+  together. Add tunes with + or by dropping them, drag to reorder, and set
+  each tune's tempo while it plays. Save it as a `.pipeset` next to your
+  tunes; changes save as you go
 - To play seconds or another harmony along with a tune, drop its file on
   the right half of the window (**Add as Harmony**), or use **File → Add
   Harmony…**. It follows the tune's tempo and repeats, and gets its own mute

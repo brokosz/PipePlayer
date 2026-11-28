@@ -247,6 +247,18 @@ final class AppState: ObservableObject {
         recents.add(url)
     }
 
+    /// Asks where to save an untitled set, then saves it there.
+    func chooseLocationAndSaveSet() {
+        guard let set = setList else { return }
+        let panel = NSSavePanel()
+        if let type = UTType(filenameExtension: SetList.fileExtension) {
+            panel.allowedContentTypes = [type]
+        }
+        panel.nameFieldStringValue = "\(set.name).\(SetList.fileExtension)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try saveSet(to: url) } catch { errorMessage = error.localizedDescription }
+    }
+
     /// The segment an entry plays as, or nil when it has a problem.
     func segmentIndex(ofEntry id: UUID) -> Int? {
         segmentEntryIDs.firstIndex(of: id)

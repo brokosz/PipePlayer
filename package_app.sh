@@ -97,9 +97,34 @@ cat > "${DIST_APP}/Contents/Info.plist" << PLIST
                 <string>com.brokosz.pipeplayer.mxl</string>
             </array>
         </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>PipePlayer Set</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.brokosz.pipeplayer.pipeset</string>
+            </array>
+        </dict>
     </array>
     <key>UTExportedTypeDeclarations</key>
     <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.brokosz.pipeplayer.pipeset</string>
+            <key>UTTypeDescription</key>
+            <string>PipePlayer Set</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.json</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>pipeset</string></array>
+            </dict>
+        </dict>
         <dict>
             <key>UTTypeIdentifier</key>
             <string>com.brokosz.pipeplayer.bww</string>

@@ -42,6 +42,16 @@ private struct AppMenuCommands: View {
         }
         .keyboardShortcut("n", modifiers: .command)
 
+        Button("New Set") {
+            if let appState, appState.isEmptyTab {
+                appState.newSet()
+            } else {
+                PendingTuneOpens.shared.enqueueNewSet()
+                openWindow(id: "main")
+            }
+        }
+        .keyboardShortcut("n", modifiers: [.command, .shift])
+
         Button("Open…") {
             AppState.chooseTuneFiles().forEach(open)
         }
@@ -52,7 +62,13 @@ private struct AppMenuCommands: View {
             appState.addHarmony(urls: AppState.chooseTuneFiles())
         }
         .keyboardShortcut("o", modifiers: [.command, .option])
-        .disabled(appState?.tune == nil)
+        .disabled(appState?.tune == nil || appState?.isSet == true)
+
+        Button("Save Set…") {
+            appState?.chooseLocationAndSaveSet()
+        }
+        .keyboardShortcut("s", modifiers: .command)
+        .disabled(appState?.isSet != true || appState?.currentURL != nil)
 
         Menu("Open Recent") {
             if recents.urls.isEmpty {

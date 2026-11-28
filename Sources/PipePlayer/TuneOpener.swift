@@ -65,4 +65,16 @@ final class PendingTuneOpens {
     func takeNext() -> URL? {
         urls.isEmpty ? nil : urls.removeFirst()
     }
+
+    /// File → New Set from a tab that already holds something opens a new
+    /// tab, which picks this up on appear.
+    private var newSetRequests = 0
+
+    func enqueueNewSet() { newSetRequests += 1 }
+
+    func takeNewSet() -> Bool {
+        guard newSetRequests > 0 else { return false }
+        newSetRequests -= 1
+        return true
+    }
 }

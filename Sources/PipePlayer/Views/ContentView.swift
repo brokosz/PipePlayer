@@ -29,6 +29,8 @@ struct ContentView: View {
     @SceneStorage("PipePlayer.mutedVoices") private var savedMutes: String = ""
     // Bookmarks of files added as harmony, as a property-list [Data].
     @SceneStorage("PipePlayer.harmonyBookmarks") private var savedHarmonies: Data = Data()
+    // An untitled set's contents (JSON) — it has no file to bookmark yet.
+    @SceneStorage("PipePlayer.untitledSet") private var savedUntitledSet: Data = Data()
     @Environment(\.openWindow) private var openWindow
 
     init() {
@@ -41,7 +43,21 @@ struct ContentView: View {
         VStack(spacing: 16) {
             header
             Divider()
-            if let tune = appState.tune {
+            if appState.isSet {
+                SetListView(appState: appState, engine: engine)
+                if !engine.segments.isEmpty {
+                    PartProgressView(
+                        timeline: engine.partTimeline,
+                        currentTime: engine.currentTime,
+                        loopedPartIndex: engine.loopedPartIndex,
+                        tuneTitles: appState.segmentTitles,
+                        onSeek: { engine.seek(to: $0) }
+                    )
+                    TransportControlsView(engine: engine)
+                } else {
+                    Spacer()
+                }
+            } else if appState.tune != nil {
                 PartProgressView(
                     timeline: engine.partTimeline,
                     currentTime: engine.currentTime,
@@ -73,7 +89,7 @@ struct ContentView: View {
         .onDrop(of: [.fileURL], delegate: TuneDropDelegate(
             isTargeted: $isTargetedForDrop,
             addsHarmony: $dropAddsHarmony,
-            canAddHarmony: appState.tune != nil,
+            canAddHarmony: appState.tune != nil && !appState.isSet,
             width: windowWidth,
             perform: handleDrop
         ))
@@ -88,6 +104,8 @@ struct ContentView: View {
             // here to show that file; otherwise it may be a restored tab.
             if let url = PendingTuneOpens.shared.takeNext() {
                 appState.open(url: url)
+            } else if PendingTuneOpens.shared.takeNewSet() {
+                appState.newSet()
             } else {
                 restoreTuneIfNeeded()
             }
@@ -109,6 +127,13 @@ struct ContentView: View {
         }
         .onChange(of: engine.tempo) { _ in savePlaybackSettings() }
         .onChange(of: engine.mutedVoiceIDs) { _ in savePlaybackSettings() }
+        .onChange(of: appState.setList) { set in
+            // Kept only while the set is untitled; once saved, the tune
+            // bookmark (the set file) brings it back.
+            let untitled = appState.currentURL == nil ? set : nil
+            savedUntitledSet = untitled.flatMap { try? JSONEncoder().encode($0) } ?? Data()
+        }
+        .onChange(of: savedUntitledSet) { _ in restoreUntitledSetIfNeeded() }
         .onChange(of: appState.harmonyURLs) { urls in
             let bookmarks = urls.compactMap { try? $0.bookmarkData() }
             savedHarmonies = (try? PropertyListEncoder().encode(bookmarks)) ?? Data()
@@ -140,17 +165,30 @@ struct ContentView: View {
     // speaker emoji prefix instead, the closest plain-text equivalent to
     // "speaker.wave.2". Only shown while actually playing (not paused or
     // stopped), so it reads as "this is the tab making sound right now."
+    private var displayTitle: String {
+        appState.setList?.name ?? appState.tune?.title ?? "PipePlayer"
+    }
+
+    /// In a set, the tune at the playhead.
+    private var setTuneTitle: String? {
+        guard appState.isSet, !engine.segments.isEmpty,
+              appState.segmentTitles.indices.contains(engine.currentSegmentIndex) else { return nil }
+        return appState.segmentTitles[engine.currentSegmentIndex]
+    }
+
     private var windowTitle: String {
-        let title = appState.tune?.title ?? "PipePlayer"
+        let title = displayTitle
         return engine.state == .playing ? "🔊 \(title)" : title
     }
 
     private var header: some View {
         HStack {
             VStack(alignment: .leading) {
-                Text(appState.tune?.title ?? "PipePlayer")
+                Text(displayTitle)
                     .font(.title2).bold()
-                if let composer = appState.tune?.composer, !composer.isEmpty {
+                if let setTuneTitle {
+                    Text(setTuneTitle).foregroundStyle(.secondary)
+                } else if let composer = appState.tune?.composer, !composer.isEmpty {
                     Text(composer).foregroundStyle(.secondary)
                 }
             }
@@ -216,7 +254,10 @@ struct ContentView: View {
     /// restore), the tab keeps that file and its restored tune moves to a
     /// tab of its own rather than being dropped.
     private func restoreTuneIfNeeded() {
-        guard let bookmark = tuneBookmark else { return }
+        guard let bookmark = tuneBookmark else {
+            restoreUntitledSetIfNeeded()
+            return
+        }
         var isStale = false
         let url = try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
         if let current = appState.currentURL {
@@ -239,6 +280,12 @@ struct ContentView: View {
         appState.open(url: url, addToRecents: false)
         restoreHarmonies()
         applySavedPlaybackSettings()
+    }
+
+    private func restoreUntitledSetIfNeeded() {
+        guard appState.isEmptyTab, tuneBookmark == nil, !savedUntitledSet.isEmpty,
+              let set = try? JSONDecoder().decode(SetList.self, from: savedUntitledSet) else { return }
+        appState.restoreUntitledSet(set)
     }
 
     /// Re-adds the tab's harmony files; ones that no longer resolve are
@@ -274,7 +321,13 @@ struct ContentView: View {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url else { return }
                 DispatchQueue.main.async {
-                    if asHarmony { appState.addHarmony(urls: [url]) } else { openTune(url) }
+                    if appState.isSet, url.pathExtension.lowercased() != SetList.fileExtension {
+                        appState.addToSet(urls: [url])
+                    } else if asHarmony {
+                        appState.addHarmony(urls: [url])
+                    } else {
+                        openTune(url)
+                    }
                 }
             }
         }

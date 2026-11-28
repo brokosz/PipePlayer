@@ -149,8 +149,28 @@ gets pointed and then played straight.
 ### Voices
 
 ABC and BWW/BMW are single-voice. The grammars have no concept of
-simultaneous parts, so every file loads as one "Melody" voice.
-Multi-voice playback is MusicXML-only.
+simultaneous parts, so every file loads as one "Melody" voice. A
+MusicXML file can carry several.
+
+Band seconds for BWW tunes live in their own files, so Add Harmony loads
+another file as extra voices. `VoiceAligner.fit` fits it to the melody part
+by part: tempo, repeats and endings come from the melody (seconds files
+often omit repeats and state their own tempo), and a part with a different
+bar count is scaled as a whole so it can't shift later parts. Harmony that
+lives inside a single BWW file ("3rd line = seconds for 2nd line") is prose
+and isn't attempted.
+
+### Sets
+
+A `.pipeset` file (JSON, `SetList`) lists tunes by path relative to the
+set file, with a bookmark as fallback and an optional per-tune tempo.
+
+`PlaybackEngine` plays a list of `PlaybackSegment`s (voices + tempo); a
+single tune is a list of one. Events and the part timeline are built per
+segment and laid end to end: segment *k+1* starts at segment *k*'s last
+part end, so the scheduler plays a set as one gap-free run, and scrubbing,
+looping and export work across it. `tempo` is the tempo of the segment at
+the playhead; changing it rescales only that segment.
 
 ### MusicXML
 
