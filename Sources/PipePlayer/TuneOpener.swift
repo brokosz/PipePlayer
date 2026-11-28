@@ -20,7 +20,7 @@ enum TuneOpener {
             existing.recents.add(url)
             return
         }
-        if let target, target.tune == nil {
+        if let target, target.isEmptyTab {
             target.open(url: url)
             return
         }

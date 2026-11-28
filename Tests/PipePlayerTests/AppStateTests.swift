@@ -262,3 +262,153 @@ struct HarmonyTests {
         #expect(state.harmonyURLs.isEmpty)
     }
 }
+
+@MainActor
+struct SetModeTests {
+
+    /// Two tunes side by side in a fresh folder.
+    private func folderWithTunes() throws -> (dir: URL, a: URL, b: URL) {
+        let a = try HarmonyTests.writeTune(named: "A.bww")
+        let dir = a.deletingLastPathComponent()
+        let b = dir.appendingPathComponent("B.bww")
+        try FileManager.default.copyItem(at: a, to: b)
+        return (dir, a, b)
+    }
+
+    private func newState() -> AppState { AppState(recents: AppStateTests.scratchRecents()) }
+
+    @Test func newSetIsEmptyAndUntitled() {
+        let state = newState()
+        state.newSet()
+        #expect(state.isSet)
+        #expect(state.setList?.entries.isEmpty == true)
+        #expect(state.setList?.name == "Untitled Set")
+        #expect(state.currentURL == nil)
+        #expect(state.engine.duration == 0)
+    }
+
+    @Test func addingTunesBuildsOneSegmentEach() throws {
+        let (_, a, b) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        state.addToSet(urls: [a, b])
+        #expect(state.engine.segments.count == 2)
+        #expect(state.segmentTitles.count == 2)
+    }
+
+    @Test func aMissingTuneIsSkippedAndExplained() throws {
+        let (dir, a, _) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        let gone = dir.appendingPathComponent("Gone.bww")
+        try FileManager.default.copyItem(at: a, to: gone)
+        state.addToSet(urls: [a, gone])
+        try FileManager.default.removeItem(at: gone)
+        state.addToSet(urls: [])
+        let goneID = try #require(state.setList?.entries.last?.id)
+        #expect(state.entryProblems[goneID] != nil)
+        #expect(state.engine.segments.count == 1)
+    }
+
+    @Test func editsSaveToTheFile() throws {
+        let (dir, a, b) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        state.addToSet(urls: [a])
+        let setURL = dir.appendingPathComponent("MSR.pipeset")
+        try state.saveSet(to: setURL)
+        #expect(state.currentURL == setURL)
+        #expect(state.setList?.name == "MSR")
+        state.addToSet(urls: [b])
+        #expect(try SetList.load(from: setURL).entries.count == 2)
+    }
+
+    @Test func tempoChangesAreRememberedPerTune() throws {
+        let (dir, a, b) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        state.addToSet(urls: [a, b])
+        let setURL = dir.appendingPathComponent("S.pipeset")
+        try state.saveSet(to: setURL)
+        state.engine.seek(to: state.engine.segmentStarts[1] + 0.1)
+        state.engine.tempo = 70
+        let saved = try SetList.load(from: setURL)
+        #expect(saved.entries[1].tempo == 70)
+        #expect(saved.entries[0].tempo == nil)
+    }
+
+    @Test func removingThePlayingTuneGoesBackToTheStart() throws {
+        let (_, a, b) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        state.addToSet(urls: [a, b])
+        state.engine.seek(to: state.engine.segmentStarts[1] + 0.1)
+        state.removeFromSet(id: state.setList!.entries[1].id)
+        #expect(state.engine.currentTime == 0)
+        #expect(state.engine.segments.count == 1)
+    }
+
+    @Test func removingAnEarlierTuneKeepsThePlace() throws {
+        let (_, a, b) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        state.addToSet(urls: [a, b])
+        state.engine.seek(to: state.engine.segmentStarts[1] + 0.1)
+        state.removeFromSet(id: state.setList!.entries[0].id)
+        #expect(abs(state.engine.currentTime - 0.1) < 0.0001)
+    }
+
+    @Test func removingTheLastTuneLeavesAnEmptySet() throws {
+        let (_, a, _) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        state.addToSet(urls: [a])
+        state.removeFromSet(id: state.setList!.entries[0].id)
+        #expect(state.isSet)
+        #expect(state.engine.duration == 0)
+    }
+
+    @Test func movingEntriesReordersSegments() throws {
+        let (_, a, b) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        state.addToSet(urls: [a, b])
+        let first = state.setList!.entries[0].id
+        state.moveSetEntries(from: IndexSet(integer: 0), to: 2)
+        #expect(state.setList!.entries[1].id == first)
+    }
+
+    @Test func openingAPipesetLoadsTheSet() throws {
+        let (dir, a, b) = try folderWithTunes()
+        let setURL = dir.appendingPathComponent("S.pipeset")
+        var set = SetList(name: "S", entries: [])
+        set.append(a, relativeTo: setURL)
+        set.append(b, relativeTo: setURL)
+        try set.write(to: setURL)
+        let state = newState()
+        state.open(url: setURL)
+        #expect(state.isSet)
+        #expect(state.engine.segments.count == 2)
+        #expect(state.currentURL == setURL)
+    }
+
+    @Test func aTuneOpenedFromAnEmptySetTabGetsItsOwnTab() throws {
+        let (_, a, _) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        var openedNewTab = false
+        TuneOpener.open(a, from: state) { openedNewTab = true }
+        #expect(openedNewTab)
+        #expect(state.isSet)
+        _ = PendingTuneOpens.shared.takeNext()
+    }
+
+    @Test func harmonyIsOffInASet() throws {
+        let (_, a, b) = try folderWithTunes()
+        let state = newState()
+        state.newSet()
+        state.addToSet(urls: [a])
+        state.addHarmony(urls: [b])
+        #expect(state.harmonyURLs.isEmpty)
+    }
+}

@@ -38,12 +38,30 @@ final class AppState: ObservableObject {
         self.recents = recents
         OpenTabs.shared.register(self)
         nowPlayingController = NowPlayingController(engine: engine)
+        engine.onSegmentTempoChange = { [weak self] index, tempo in
+            MainActor.assumeIsolated { self?.segmentTempoChanged(index, tempo) }
+        }
     }
+
+    /// True for a tab with nothing in it — no tune and no set — which a
+    /// newly opened file may take over.
+    var isEmptyTab: Bool { tune == nil && !isSet }
 
     /// Static so File → Open works with no window open at all — there's no
     /// AppState to call it on until a window exists. Several files at once
     /// open one per tab (see `TuneOpener`).
     static func chooseTuneFiles() -> [URL] {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = (TuneFileLoader.supportedExtensions + [SetList.fileExtension]).compactMap { UTType(filenameExtension: $0) }
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        guard panel.runModal() == .OK else { return [] }
+        return panel.urls
+    }
+
+    /// Tunes only — what a set's + button offers.
+    static func chooseSetTuneFiles() -> [URL] {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = TuneFileLoader.supportedExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = true
@@ -71,9 +89,14 @@ final class AppState: ObservableObject {
     /// reopening every restored tab shouldn't reshuffle Open Recent into
     /// whatever order the windows happened to come back in.
     func open(url: URL, addToRecents: Bool = true) {
+        if url.pathExtension.lowercased() == SetList.fileExtension {
+            openSet(url: url, addToRecents: addToRecents)
+            return
+        }
         do {
             let loadedVoices = try TuneFileLoader.loadVoices(from: url)
             let alignedVoices = VoiceAligner.align(loadedVoices)
+            setList = nil
             melodyVoices = alignedVoices
             harmonies = []
             nextHarmonyNumber = 0
@@ -104,7 +127,7 @@ final class AppState: ObservableObject {
     /// at the same tempo, with existing mutes kept. A file that won't load
     /// is reported and skipped.
     func addHarmony(urls: [URL]) {
-        guard let melody = melodyVoices.first?.tune else { return }
+        guard !isSet, let melody = melodyVoices.first?.tune else { return }
         var added = false
         for url in urls {
             do {
@@ -155,6 +178,140 @@ final class AppState: ObservableObject {
         if wasPlaying { engine.play() }
     }
 
+    // MARK: - Sets
+
+    /// The set this tab holds, if it holds one rather than a single tune.
+    @Published private(set) var setList: SetList?
+    var isSet: Bool { setList != nil }
+    /// Why an entry isn't playing (file missing, won't parse), by entry id.
+    @Published private(set) var entryProblems: [UUID: String] = [:]
+    /// Titles of the tunes that loaded, in play order — one per segment.
+    @Published private(set) var segmentTitles: [String] = []
+    /// The entry behind each loaded segment (problem entries are skipped).
+    private var segmentEntryIDs: [UUID] = []
+
+    /// A new, empty, untitled set in this tab.
+    func newSet() {
+        resetForSet(SetList(name: "Untitled Set", entries: []), url: nil)
+    }
+
+    /// Restores an untitled set (from the tab's saved state).
+    func restoreUntitledSet(_ set: SetList) {
+        resetForSet(set, url: nil)
+    }
+
+    private func openSet(url: URL, addToRecents: Bool) {
+        do {
+            resetForSet(try SetList.load(from: url), url: url)
+            if addToRecents { recents.add(url) }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func resetForSet(_ set: SetList, url: URL?) {
+        engine.stop()
+        voices = []
+        melodyVoices = []
+        harmonies = []
+        setList = set
+        currentURL = url
+        reloadSet()
+    }
+
+    func addToSet(urls: [URL]) {
+        guard setList != nil else { return }
+        for url in urls { setList?.append(url, relativeTo: currentURL) }
+        setChanged()
+    }
+
+    func removeFromSet(id: UUID) {
+        setList?.entries.removeAll { $0.id == id }
+        setChanged()
+    }
+
+    func moveSetEntries(from source: IndexSet, to destination: Int) {
+        setList?.entries.move(fromOffsets: source, toOffset: destination)
+        setChanged()
+    }
+
+    /// Saves the set to `url` — the first save of an untitled set, or a
+    /// save elsewhere. Later edits save there automatically.
+    func saveSet(to url: URL) throws {
+        guard var set = setList else { return }
+        set.rebase(to: url, from: currentURL)
+        set.name = url.deletingPathExtension().lastPathComponent
+        try set.write(to: url)
+        setList = set
+        currentURL = url
+        recents.add(url)
+    }
+
+    /// The segment an entry plays as, or nil when it has a problem.
+    func segmentIndex(ofEntry id: UUID) -> Int? {
+        segmentEntryIDs.firstIndex(of: id)
+    }
+
+    private func setChanged() {
+        reloadSet()
+        writeSet()
+    }
+
+    private func writeSet() {
+        guard let set = setList, let url = currentURL else { return }
+        do { try set.write(to: url) } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// Rebuilds the engine's segments from the set. Playback stays at the
+    /// same spot in the tune that was playing if that tune is still there;
+    /// otherwise it goes back to the start.
+    private func reloadSet() {
+        guard let set = setList else { return }
+        let wasPlaying = engine.state == .playing
+        let index = engine.currentSegmentIndex
+        let playingID = segmentEntryIDs.indices.contains(index) ? segmentEntryIDs[index] : nil
+        let offset = engine.segmentStarts.indices.contains(index) ? engine.currentTime - engine.segmentStarts[index] : 0
+
+        var segments: [PlaybackSegment] = []
+        var ids: [UUID] = []
+        var titles: [String] = []
+        var problems: [UUID: String] = [:]
+        for entry in set.entries {
+            guard let url = set.url(for: entry, relativeTo: currentURL) else {
+                problems[entry.id] = "File not found"
+                continue
+            }
+            do {
+                let voices = VoiceAligner.align(try TuneFileLoader.loadVoices(from: url))
+                guard let first = voices.first else { throw TuneFileLoaderError.unsupportedExtension(url.pathExtension) }
+                segments.append(PlaybackSegment(
+                    voices: voices,
+                    tempo: entry.tempo ?? first.tune.tempo,
+                    displayTempoScaleFactor: first.displayTempoScaleFactor
+                ))
+                ids.append(entry.id)
+                titles.append(first.tune.title.isEmpty ? url.deletingPathExtension().lastPathComponent : first.tune.title)
+            } catch {
+                problems[entry.id] = error.localizedDescription
+            }
+        }
+        segmentEntryIDs = ids
+        segmentTitles = titles
+        entryProblems = problems
+        engine.load(segments: segments)
+        if let playingID, let newIndex = ids.firstIndex(of: playingID) {
+            engine.seek(to: engine.segmentStarts[newIndex] + offset)
+            if wasPlaying { engine.play() }
+        }
+    }
+
+    private func segmentTempoChanged(_ index: Int, _ tempo: Double) {
+        guard segmentEntryIDs.indices.contains(index),
+              let entryIndex = setList?.entries.firstIndex(where: { $0.id == segmentEntryIDs[index] }) else { return }
+        setList?.entries[entryIndex].tempo = tempo
+        writeSet()
+    }
+
     // MARK: - Per-tab playback settings
 
     /// The tempo this tab plays at, when it isn't the file's own — what
@@ -185,6 +342,10 @@ final class AppState: ObservableObject {
         voices = []
         melodyVoices = []
         harmonies = []
+        setList = nil
+        segmentEntryIDs = []
+        segmentTitles = []
+        entryProblems = [:]
         currentURL = nil
     }
 }
