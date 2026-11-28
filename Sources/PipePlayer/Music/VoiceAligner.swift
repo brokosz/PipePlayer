@@ -63,6 +63,56 @@ enum VoiceAligner {
         }
     }
 
+    /// Fits a harmony from its own file (band seconds — BWW has no second
+    /// voice, so they live apart) to the melody's form, part by part: part
+    /// *i* against melody part *i*, taking its repeat, rhythm and tempo.
+    /// Seconds files often leave the repeat marks off (Cullen Bay), and
+    /// their stated tempo needn't match (Loch Rannoch: 90 against 69).
+    ///
+    /// Same bar count: each bar takes its melody bar's endings and length.
+    /// Different count (Highland Cradle Song, 10 bars against 8 — pickups
+    /// and endings written differently): the part is scaled as a whole to
+    /// the melody part's written length and plays every pass in full, so
+    /// the mismatch can't spill into later parts. Extra harmony parts are
+    /// dropped.
+    static func fit(_ harmony: Tune, to melody: Tune) -> Tune {
+        var fitted = harmony
+        fitted.tempo = melody.tempo
+        fitted.parts = zip(harmony.parts, melody.parts).map { part, melodyPart in
+            var result = part
+            result.hasRepeat = melodyPart.hasRepeat
+            result.rhythm = melodyPart.rhythm
+            if part.measures.count == melodyPart.measures.count {
+                result.measures = zip(part.measures, melodyPart.measures).map { measure, melodyMeasure in
+                    var scaled = scale(measure, by: totalBeats(of: melodyMeasure), over: totalBeats(of: measure))
+                    scaled.endingNumbers = melodyMeasure.endingNumbers
+                    return scaled
+                }
+            } else {
+                let target = melodyPart.measures.reduce(0) { $0 + totalBeats(of: $1) }
+                let current = part.measures.reduce(0) { $0 + totalBeats(of: $1) }
+                result.measures = part.measures.map { measure in
+                    var scaled = scale(measure, by: target, over: current)
+                    scaled.endingNumbers = []
+                    return scaled
+                }
+            }
+            return result
+        }
+        return fitted
+    }
+
+    private static func scale(_ measure: Measure, by target: Double, over current: Double) -> Measure {
+        guard current > 0.0001, target > 0.0001 else { return measure }
+        var scaled = measure
+        scaled.notes = measure.notes.map { note in
+            var n = note
+            n.duration *= target / current
+            return n
+        }
+        return scaled
+    }
+
     private static func totalBeats(of measure: Measure) -> Double {
         measure.notes.reduce(0.0) { $0 + $1.duration * ($1.isDotted ? 1.5 : 1.0) }
     }

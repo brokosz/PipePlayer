@@ -63,4 +63,60 @@ struct VoiceAlignerTests {
         let voices = [Voice(id: "melody", name: "Melody", tune: melody)]
         #expect(VoiceAligner.align(voices) == voices)
     }
+
+    // MARK: - fit(_:to:) — a harmony file fitted to the melody part by part
+
+    private func bars(_ count: Int, beats: Int = 2, endings: [Int: [Int]] = [:]) -> [Measure] {
+        (0..<count).map { i in
+            Measure(notes: Array(repeating: note(.lowA, 1), count: beats), endingNumbers: endings[i] ?? [])
+        }
+    }
+
+    private func tune(_ parts: [TunePart], tempo: Double = 90) -> Tune {
+        Tune(title: "T", composer: nil, tempo: tempo, timeSignature: "2/4", parts: parts)
+    }
+
+    @Test func fitTakesTheMelodysRepeats() {
+        let melody = tune([TunePart(measures: bars(4), hasRepeat: true), TunePart(measures: bars(4), hasRepeat: true)])
+        let harmony = tune([TunePart(measures: bars(4)), TunePart(measures: bars(4))])
+        let fitted = VoiceAligner.fit(harmony, to: melody)
+        #expect(fitted.parts.allSatisfy { $0.hasRepeat })
+    }
+
+    @Test func fitTakesTheMelodysEndings() {
+        let melody = tune([TunePart(measures: bars(4, endings: [2: [1], 3: [2]]), hasRepeat: true)])
+        let harmony = tune([TunePart(measures: bars(4))])
+        let fitted = VoiceAligner.fit(harmony, to: melody)
+        #expect(fitted.parts[0].measures.map { $0.endingNumbers } == [[], [], [1], [2]])
+    }
+
+    @Test func fitScalesAMismatchedPartAsAWhole() {
+        let melody = tune([TunePart(measures: bars(10, endings: [9: [2]]), hasRepeat: true)])
+        let harmony = tune([TunePart(measures: bars(8, endings: [7: [2]]))])
+        let fitted = VoiceAligner.fit(harmony, to: melody)
+        let part = fitted.parts[0]
+        #expect(part.measures.count == 8)
+        #expect(abs(PlayOrder.beats(of: part.measures) - 20) < 0.0001)
+        #expect(part.measures.allSatisfy { $0.endingNumbers.isEmpty })
+        #expect(part.hasRepeat)
+    }
+
+    @Test func fitDropsExtraHarmonyParts() {
+        let melody = tune([TunePart(measures: bars(2)), TunePart(measures: bars(2))])
+        let harmony = tune([TunePart(measures: bars(2)), TunePart(measures: bars(2)), TunePart(measures: bars(2))])
+        #expect(VoiceAligner.fit(harmony, to: melody).parts.count == 2)
+    }
+
+    @Test func fitUsesTheMelodysTempo() {
+        let melody = tune([TunePart(measures: bars(2))], tempo: 69)
+        let harmony = tune([TunePart(measures: bars(2))], tempo: 90)
+        #expect(VoiceAligner.fit(harmony, to: melody).tempo == 69)
+    }
+
+    @Test func fitLeavesAnEmptyPartAlone() {
+        let melody = tune([TunePart(measures: bars(2))])
+        let harmony = tune([TunePart(measures: [])])
+        #expect(VoiceAligner.fit(harmony, to: melody).parts[0].measures.isEmpty)
+    }
 }
+
