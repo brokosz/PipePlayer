@@ -59,4 +59,39 @@ struct SetListTests {
         set.rebase(to: dir.appendingPathComponent("sub/set.pipeset"), from: dir.appendingPathComponent("set.pipeset"))
         #expect(set.entries[0].relativePath == "b.bww")
     }
+
+    @Test func oldFilesWithoutHarmoniesStillLoad() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pipeset")
+        try """
+        {"entries":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","relativePath":"a.bww"}],"name":"Old"}
+        """.write(to: url, atomically: true, encoding: .utf8)
+        let set = try SetList.load(from: url)
+        #expect(set.entries[0].harmonies.isEmpty)
+    }
+
+    @Test func harmoniesRoundTrip() throws {
+        let dir = try makeFolder()
+        let setURL = dir.appendingPathComponent("set.pipeset")
+        var set = SetList(name: "S", entries: [])
+        set.append(dir.appendingPathComponent("a.bww"), relativeTo: setURL)
+        set.addHarmony(dir.appendingPathComponent("sub/b.bww"), toEntry: set.entries[0].id, relativeTo: setURL)
+        try set.write(to: setURL)
+        let loaded = try SetList.load(from: setURL)
+        #expect(loaded == set)
+        #expect(loaded.entries[0].harmonies[0].relativePath == "sub/b.bww")
+        let url = loaded.url(for: loaded.entries[0].harmonies[0], relativeTo: setURL)
+        #expect(url?.lastPathComponent == "b.bww")
+        set.removeHarmony(at: 0, fromEntry: set.entries[0].id)
+        #expect(set.entries[0].harmonies.isEmpty)
+    }
+
+    @Test func rebaseRewritesHarmonyPaths() throws {
+        let dir = try makeFolder()
+        var set = SetList(name: "S", entries: [])
+        set.append(dir.appendingPathComponent("a.bww"), relativeTo: nil)
+        set.addHarmony(dir.appendingPathComponent("sub/b.bww"), toEntry: set.entries[0].id, relativeTo: nil)
+        set.rebase(to: dir.appendingPathComponent("set.pipeset"), from: nil)
+        #expect(set.entries[0].harmonies[0].relativePath == "sub/b.bww")
+    }
 }
+
