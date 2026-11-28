@@ -43,6 +43,24 @@ final class OpenTabs {
         refs.append(WeakRef(state: state))
     }
 
+    /// Called when a tab's window closes. SwiftUI can keep a closed tab's
+    /// state alive for a while; left registered, a file opened from Finder
+    /// could be "focused" in, or loaded into, a window that's gone.
+    func unregister(_ state: AppState) {
+        refs.removeAll { $0.state == nil || $0.state === state }
+    }
+
+    var hasTabs: Bool {
+        refs.removeAll { $0.state == nil }
+        return !refs.isEmpty
+    }
+
+    /// A tab with nothing in it, if there is one.
+    var firstEmptyTab: AppState? {
+        refs.removeAll { $0.state == nil }
+        return refs.lazy.compactMap(\.state).first { $0.isEmptyTab }
+    }
+
     func tab(showing url: URL) -> AppState? {
         refs.removeAll { $0.state == nil }
         return refs.lazy.compactMap(\.state).first { state in

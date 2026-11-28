@@ -2,17 +2,20 @@ import SwiftUI
 
 @main
 struct PipePlayerApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
+    init() {
+        ExternalOpens.markLaunched()
+    }
+
     var body: some Scene {
         WindowGroup(id: "main") {
             ContentView()
         }
         .windowResizability(.contentSize)
-        // By default a WindowGroup opens a brand-new window for every file
-        // Finder hands it, before any code sees the URL — so reopening an
-        // already-open tune left an empty tab behind. Matching nothing here
-        // sends the URL to an existing window's `onOpenURL` instead, and
-        // `TuneOpener` decides where it really goes. With no window open,
-        // SwiftUI still makes one.
+        // Files from Finder go to `AppDelegate` and are routed by
+        // `ExternalOpens`; matching nothing here stops SwiftUI from also
+        // making a window of its own for each one.
         .handlesExternalEvents(matching: [])
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -37,6 +40,10 @@ private struct AppMenuCommands: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        // Hands the window opener to `ExternalOpens`, which runs outside any
+        // view and needs it when a file arrives with no window open.
+        let _ = (ExternalOpens.openWindow = { [openWindow] in openWindow(id: "main") })
+
         Button("New Window") {
             openWindow(id: "main")
         }
@@ -105,5 +112,52 @@ private struct CloseTuneMenuCommand: View {
             appState?.closeTune()
         }
         .disabled(appState?.tune == nil)
+    }
+}
+
+/// Receives files opened from Finder (double-click, Open With, drag onto
+/// the Dock icon). SwiftUI's own routing of these raced tab restoration on
+/// launch and, with every window closed, delivered them to no window at all.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated { ExternalOpens.receive(urls) }
+    }
+}
+
+/// Routes files from Finder the same way File → Open does (`TuneOpener`):
+/// the tab already showing it, else an empty tab, else a new tab — opening
+/// a window when none is open.
+@MainActor
+enum ExternalOpens {
+    static var openWindow: (() -> Void)?
+    private static var launchedAt = Date()
+
+    static func markLaunched() { launchedAt = Date() }
+
+    static func receive(_ urls: [URL]) {
+        whenTabsRestored {
+            NSApp?.activate(ignoringOtherApps: true)
+            for url in urls {
+                TuneOpener.open(url, from: OpenTabs.shared.firstEmptyTab) { openWindow?() }
+            }
+        }
+    }
+
+    /// At launch, waits until restored tabs have their tunes back before
+    /// routing: SceneStorage delivers them a beat after the window appears
+    /// (measured at over a second for a tab group), and a file routed sooner
+    /// can land in a restored tab and replace its tune. Ready once every tab
+    /// holds something, or after 3 seconds (a fresh, empty window never
+    /// fills on its own). Later opens go straight through.
+    private static func whenTabsRestored(_ action: @escaping @MainActor () -> Void) {
+        let elapsed = Date().timeIntervalSince(launchedAt)
+        let settled = elapsed > 0.3 && OpenTabs.shared.hasTabs && OpenTabs.shared.firstEmptyTab == nil
+        if elapsed >= 3 || settled {
+            action()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                MainActor.assumeIsolated { whenTabsRestored(action) }
+            }
+        }
     }
 }

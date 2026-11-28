@@ -145,6 +145,19 @@ struct RecentTunesTests {
 @MainActor
 struct TuneOpenerTests {
 
+    /// A closed window's tab can outlive the window in memory; it must not
+    /// be reused for a file opened from Finder, or the file goes nowhere.
+    @Test func aClosedTabIsntReused() throws {
+        let url = try AppStateTests.writeTempTune()
+        let closed = AppState(recents: AppStateTests.scratchRecents())
+        closed.open(url: url, addToRecents: false)
+        let empty = AppState(recents: AppStateTests.scratchRecents())
+        OpenTabs.shared.unregister(closed)
+        OpenTabs.shared.unregister(empty)
+        #expect(OpenTabs.shared.tab(showing: url) == nil)
+        #expect(OpenTabs.shared.firstEmptyTab !== empty)
+    }
+
     @Test func loadsIntoAnEmptyTab() throws {
         let url = try AppStateTests.writeTempTune()
         defer { try? FileManager.default.removeItem(at: url) }

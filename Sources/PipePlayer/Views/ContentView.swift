@@ -99,6 +99,7 @@ struct ContentView: View {
             // without quitting the app — playback should stop right along
             // with it rather than keep running with no window to control it.
             engine.stop()
+            OpenTabs.shared.unregister(appState)
         }
         .onAppear {
             // A window opened from File → Open with nothing else open is
@@ -139,14 +140,6 @@ struct ContentView: View {
             let bookmarks = urls.compactMap { try? $0.bookmarkData() }
             savedHarmonies = (try? PropertyListEncoder().encode(bookmarks)) ?? Data()
         }
-        .onOpenURL { url in
-            // Finder's "Open With"/double-click and the custom document-type
-            // registrations in package_app.sh's Info.plist deliver the file
-            // here — without this, Launch Services still launches/activates
-            // the app and opens a window, but nothing ever reads the file.
-            openTune(url)
-        }
-        .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         .focusedSceneObject(appState)
         .alert(
             "Couldn't open file",
