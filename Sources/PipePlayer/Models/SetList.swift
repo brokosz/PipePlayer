@@ -44,6 +44,9 @@ struct SetList: Codable, Equatable {
     /// A file the set points at: its path relative to the set file, and a
     /// bookmark as fallback.
     struct FileRef: Codable, Equatable {
+        /// Stable across edits, so a harmony's voice (and its mute) keeps
+        /// its identity when another harmony is removed.
+        var id: UUID = UUID()
         var relativePath: String?
         var bookmark: Data?
 
@@ -55,6 +58,13 @@ struct SetList: Codable, Equatable {
         init(_ url: URL, relativeTo setURL: URL?) {
             relativePath = setURL.map { SetList.relativePath(of: url, from: $0) }
             bookmark = try? url.bookmarkData()
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+            relativePath = try c.decodeIfPresent(String.self, forKey: .relativePath)
+            bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
         }
     }
 

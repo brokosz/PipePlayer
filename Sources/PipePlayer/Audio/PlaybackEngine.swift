@@ -380,7 +380,9 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         stop()
         segments = newSegments
         voices = newSegments.count == 1 ? newSegments[0].voices : []
-        let ids = Set(newSegments.flatMap { $0.voices.map(\.id) })
+        // Only where there's still a mute row to undo them: a tune left with
+        // one voice (its last harmony removed) must not stay silent.
+        let ids = Set(newSegments.filter { $0.voices.count > 1 }.flatMap { $0.voices.map(\.id) })
         mutedVoiceIDs = keepingMutes ? previousMutes.intersection(ids) : []
         loopedPartIndex = loopMode == .part ? 0 : nil
         rebuildEvents(preservingPosition: false)

@@ -23,6 +23,15 @@ struct SetListView: View {
                             Button("Add Harmony…") {
                                 appState.addHarmony(urls: AppState.chooseSetTuneFiles(), toEntry: entry.id)
                             }
+                            let names = appState.harmonyNames(ofEntry: entry.id)
+                            if !names.isEmpty {
+                                Divider()
+                                ForEach(Array(names.enumerated()), id: \.offset) { index, name in
+                                    Button("Remove \(name)") {
+                                        appState.removeHarmony(at: index, fromEntry: entry.id)
+                                    }
+                                }
+                            }
                         }
                 }
                 .onMove { appState.moveSetEntries(from: $0, to: $1) }

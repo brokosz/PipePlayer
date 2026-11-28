@@ -525,3 +525,50 @@ struct SetHarmonyTests {
         #expect(state.engine.segments[0].voices.count == 2)
     }
 }
+
+@MainActor
+struct SetHarmonyEditTests {
+
+    private func setWithTwoHarmonies() throws -> (AppState, UUID) {
+        let a = try HarmonyTests.writeTune(named: "Tune.bww")
+        let dir = a.deletingLastPathComponent()
+        let first = dir.appendingPathComponent("First.bww")
+        let second = dir.appendingPathComponent("Second.bww")
+        try FileManager.default.copyItem(at: a, to: first)
+        try FileManager.default.copyItem(at: a, to: second)
+        let state = AppState(recents: AppStateTests.scratchRecents())
+        state.newSet()
+        state.addToSet(urls: [a])
+        let entry = state.setList!.entries[0].id
+        state.addHarmony(urls: [first, second], toEntry: entry)
+        try state.saveSet(to: dir.appendingPathComponent("S.pipeset"))
+        return (state, entry)
+    }
+
+    private func voiceID(_ state: AppState, named name: String) -> String? {
+        state.engine.segments[0].voices.first { $0.name == name }?.id
+    }
+
+    @Test func aMuteStaysWithItsHarmonyWhenAnotherIsRemoved() throws {
+        let (state, _) = try setWithTwoHarmonies()
+        state.engine.setVoiceMuted(id: try #require(voiceID(state, named: "Second")), muted: true)
+        state.removeHarmony(voiceID: try #require(voiceID(state, named: "First")))
+        let second = try #require(voiceID(state, named: "Second"))
+        #expect(state.engine.mutedVoiceIDs == [second])
+    }
+
+    @Test func removingTheLastSetHarmonyUnmutesTheMelody() throws {
+        let (state, entry) = try setWithTwoHarmonies()
+        state.engine.setVoiceMuted(id: state.engine.segments[0].voices[0].id, muted: true)
+        state.removeHarmony(at: 1, fromEntry: entry)
+        state.removeHarmony(at: 0, fromEntry: entry)
+        #expect(state.engine.mutedVoiceIDs.isEmpty)
+    }
+
+    @Test func aMissingHarmonyCanBeRemoved() throws {
+        let (state, entry) = try setWithTwoHarmonies()
+        state.removeHarmony(at: 0, fromEntry: entry)
+        #expect(state.harmonyNames(ofEntry: entry) == ["Second"])
+        #expect(try SetList.load(from: state.currentURL!).entries[0].harmonies.count == 1)
+    }
+}

@@ -209,6 +209,13 @@ final class AppState: ObservableObject {
     /// Harmony names per entry, for the list ("(missing)" when not found).
     private var entryHarmonyNames: [UUID: [String]] = [:]
 
+    /// Removes one of a tune's harmonies by position — also how a harmony
+    /// whose file has gone missing (and so has no voice) gets cleared.
+    func removeHarmony(at index: Int, fromEntry id: UUID) {
+        setList?.removeHarmony(at: index, fromEntry: id)
+        setChanged()
+    }
+
     func harmonyNames(ofEntry id: UUID) -> [String] {
         entryHarmonyNames[id] ?? []
     }
@@ -381,7 +388,7 @@ final class AppState: ObservableObject {
                     let fileName = harmonyURL.deletingPathExtension().lastPathComponent
                     names.append(fileName)
                     for voice in loaded {
-                        let id = "\(entry.id)-h\(h)-\(voice.id)"
+                        let id = "\(entry.id)-h\(ref.id)-\(voice.id)"
                         owners[id] = (entry.id, h)
                         voices.append(Voice(
                             id: id,
