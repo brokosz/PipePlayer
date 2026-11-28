@@ -97,6 +97,7 @@ final class AppState: ObservableObject {
             let loadedVoices = try TuneFileLoader.loadVoices(from: url)
             let alignedVoices = VoiceAligner.align(loadedVoices)
             setList = nil
+            setHarmonyOwners = [:]
             melodyVoices = alignedVoices
             harmonies = []
             nextHarmonyNumber = 0
@@ -127,7 +128,14 @@ final class AppState: ObservableObject {
     /// at the same tempo, with existing mutes kept. A file that won't load
     /// is reported and skipped.
     func addHarmony(urls: [URL]) {
-        guard !isSet, let melody = melodyVoices.first?.tune else { return }
+        if isSet {
+            let index = engine.currentSegmentIndex
+            if segmentEntryIDs.indices.contains(index) {
+                addHarmony(urls: urls, toEntry: segmentEntryIDs[index])
+            }
+            return
+        }
+        guard let melody = melodyVoices.first?.tune else { return }
         var added = false
         for url in urls {
             do {
@@ -153,13 +161,18 @@ final class AppState: ObservableObject {
 
     /// Removes the harmony file `voiceID` came from — all of its voices.
     func removeHarmony(voiceID: String) {
+        if let owner = setHarmonyOwners[voiceID] {
+            setList?.removeHarmony(at: owner.index, fromEntry: owner.entry)
+            setChanged()
+            return
+        }
         guard let index = harmonies.firstIndex(where: { $0.voices.contains { $0.id == voiceID } }) else { return }
         harmonies.remove(at: index)
         reloadVoices()
     }
 
     func isHarmony(_ voiceID: String) -> Bool {
-        harmonies.contains { $0.voices.contains { $0.id == voiceID } }
+        setHarmonyOwners[voiceID] != nil || harmonies.contains { $0.voices.contains { $0.id == voiceID } }
     }
 
     private func reloadVoices() {
@@ -191,6 +204,58 @@ final class AppState: ObservableObject {
     @Published private(set) var segmentTitles: [String] = []
     /// The entry behind each loaded segment (problem entries are skipped).
     private var segmentEntryIDs: [UUID] = []
+    /// Which entry, and which of its harmonies, each set harmony voice is.
+    private var setHarmonyOwners: [String: (entry: UUID, index: Int)] = [:]
+    /// Harmony names per entry, for the list ("(missing)" when not found).
+    private var entryHarmonyNames: [UUID: [String]] = [:]
+
+    func harmonyNames(ofEntry id: UUID) -> [String] {
+        entryHarmonyNames[id] ?? []
+    }
+
+    /// Adds harmony files to one tune of the set and saves. A file that
+    /// won't load is reported and not added.
+    func addHarmony(urls: [URL], toEntry id: UUID) {
+        guard isSet else { return }
+        var added = false
+        for url in urls {
+            do {
+                _ = try TuneFileLoader.loadVoices(from: url)
+                setList?.addHarmony(url, toEntry: id, relativeTo: currentURL)
+                added = true
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+        if added { setChanged() }
+    }
+
+    /// Saves this tune and its harmonies as a one-tune set — a pairing that
+    /// reopens together — and turns the tab into that set.
+    func saveTuneAsSet(to url: URL) throws {
+        guard !isSet, let tuneURL = currentURL else { return }
+        var set = SetList(name: url.deletingPathExtension().lastPathComponent, entries: [])
+        set.append(tuneURL, relativeTo: url)
+        set.entries[0].tempo = tempoOverride
+        for harmony in harmonyURLs {
+            set.addHarmony(harmony, toEntry: set.entries[0].id, relativeTo: url)
+        }
+        try set.write(to: url)
+        openSet(url: url, addToRecents: true)
+    }
+
+    /// Asks where to save this tune and its harmonies as a set.
+    func chooseLocationAndSaveTuneAsSet() {
+        guard let name = currentURL?.deletingPathExtension().lastPathComponent else { return }
+        let panel = NSSavePanel()
+        if let type = UTType(filenameExtension: SetList.fileExtension) {
+            panel.allowedContentTypes = [type]
+        }
+        panel.nameFieldStringValue = "\(name).\(SetList.fileExtension)"
+        panel.directoryURL = currentURL?.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try saveTuneAsSet(to: url) } catch { errorMessage = error.localizedDescription }
+    }
 
     /// A new, empty, untitled set in this tab.
     func newSet() {
@@ -290,14 +355,42 @@ final class AppState: ObservableObject {
         var ids: [UUID] = []
         var titles: [String] = []
         var problems: [UUID: String] = [:]
+        var owners: [String: (entry: UUID, index: Int)] = [:]
+        var harmonyNames: [UUID: [String]] = [:]
         for entry in set.entries {
             guard let url = set.url(for: entry, relativeTo: currentURL) else {
                 problems[entry.id] = "File not found"
                 continue
             }
             do {
-                let voices = VoiceAligner.align(try TuneFileLoader.loadVoices(from: url))
-                guard let first = voices.first else { throw TuneFileLoaderError.unsupportedExtension(url.pathExtension) }
+                // Ids carry the entry so mutes stay with one tune of the set.
+                let melody = VoiceAligner.align(try TuneFileLoader.loadVoices(from: url)).map {
+                    Voice(id: "\(entry.id)-\($0.id)", name: $0.name, tune: $0.tune, displayTempoScaleFactor: $0.displayTempoScaleFactor)
+                }
+                guard let first = melody.first else { throw TuneFileLoaderError.unsupportedExtension(url.pathExtension) }
+                var voices = melody
+                var names: [String] = []
+                for (h, ref) in entry.harmonies.enumerated() {
+                    let fallbackName = ref.relativePath.map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension } ?? "Harmony"
+                    // A harmony that's gone doesn't stop the tune.
+                    guard let harmonyURL = set.url(for: ref, relativeTo: currentURL),
+                          let loaded = try? TuneFileLoader.loadVoices(from: harmonyURL) else {
+                        names.append("\(fallbackName) (missing)")
+                        continue
+                    }
+                    let fileName = harmonyURL.deletingPathExtension().lastPathComponent
+                    names.append(fileName)
+                    for voice in loaded {
+                        let id = "\(entry.id)-h\(h)-\(voice.id)"
+                        owners[id] = (entry.id, h)
+                        voices.append(Voice(
+                            id: id,
+                            name: loaded.count > 1 ? "\(fileName) – \(voice.name)" : fileName,
+                            tune: VoiceAligner.fit(voice.tune, to: first.tune)
+                        ))
+                    }
+                }
+                harmonyNames[entry.id] = names
                 segments.append(PlaybackSegment(
                     voices: voices,
                     tempo: entry.tempo ?? first.tune.tempo,
@@ -313,7 +406,9 @@ final class AppState: ObservableObject {
         segmentEntryIDs = ids
         segmentTitles = titles
         entryProblems = problems
-        engine.load(segments: segments)
+        setHarmonyOwners = owners
+        entryHarmonyNames = harmonyNames
+        engine.load(segments: segments, keepingMutes: true)
         if let playingID, let newIndex = ids.firstIndex(of: playingID) {
             engine.seek(to: engine.segmentStarts[newIndex] + offset)
             if wasPlaying { engine.play() }
@@ -364,6 +459,8 @@ final class AppState: ObservableObject {
         melodyVoices = []
         harmonies = []
         setList = nil
+        setHarmonyOwners = [:]
+        entryHarmonyNames = [:]
         segmentEntryIDs = []
         segmentTitles = []
         entryProblems = [:]

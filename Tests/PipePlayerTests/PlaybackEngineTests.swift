@@ -304,6 +304,13 @@ struct PlaybackEngineTests {
         #expect(TempoDraft.valueToCommit(draft: "x", original: "90") == nil)
     }
 
+    @Test func currentVoicesFollowThePlayhead() {
+        let engine = twoTuneSet()
+        #expect(engine.currentVoices.first?.tune.title == "lowA")
+        engine.seek(to: 5)
+        #expect(engine.currentVoices.first?.tune.title == "d")
+    }
+
     @Test func singleTuneTimelineMatchesPlayOrder() {
         let engine = PlaybackEngine()
         let tune = segment(.lowA, tempo: 90).voices[0].tune

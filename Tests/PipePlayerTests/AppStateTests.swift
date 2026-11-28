@@ -433,3 +433,95 @@ struct SetModeTests {
         #expect(state.harmonyURLs.isEmpty)
     }
 }
+
+@MainActor
+struct SetHarmonyTests {
+
+    /// A.bww, B.bww and Seconds.bww side by side.
+    private func folder() throws -> (dir: URL, a: URL, b: URL, seconds: URL) {
+        let a = try HarmonyTests.writeTune(named: "A.bww")
+        let dir = a.deletingLastPathComponent()
+        let b = dir.appendingPathComponent("B.bww")
+        let seconds = dir.appendingPathComponent("Seconds.bww")
+        try FileManager.default.copyItem(at: a, to: b)
+        try FileManager.default.copyItem(at: a, to: seconds)
+        return (dir, a, b, seconds)
+    }
+
+    private func savedSet(_ f: (dir: URL, a: URL, b: URL, seconds: URL)) throws -> (AppState, URL) {
+        let state = AppState(recents: AppStateTests.scratchRecents())
+        state.newSet()
+        state.addToSet(urls: [f.a, f.b])
+        let setURL = f.dir.appendingPathComponent("S.pipeset")
+        try state.saveSet(to: setURL)
+        return (state, setURL)
+    }
+
+    @Test func addingHarmonyInASetAttachesToTheTuneAtThePlayhead() throws {
+        let f = try folder()
+        let (state, _) = try savedSet(f)
+        state.engine.seek(to: state.engine.segmentStarts[1] + 0.1)
+        state.addHarmony(urls: [f.seconds])
+        #expect(state.setList!.entries[0].harmonies.isEmpty)
+        #expect(state.setList!.entries[1].harmonies.count == 1)
+        #expect(state.engine.segments[1].voices.count == 2)
+        #expect(state.harmonyNames(ofEntry: state.setList!.entries[1].id) == ["Seconds"])
+    }
+
+    @Test func setHarmoniesAreSavedAndReloaded() throws {
+        let f = try folder()
+        let (state, setURL) = try savedSet(f)
+        state.addHarmony(urls: [f.seconds], toEntry: state.setList!.entries[0].id)
+        let reopened = AppState(recents: AppStateTests.scratchRecents())
+        reopened.open(url: setURL)
+        #expect(reopened.engine.segments[0].voices.count == 2)
+        #expect(reopened.isHarmony(reopened.engine.segments[0].voices[1].id))
+    }
+
+    @Test func removingASetHarmonyRemovesItFromTheFile() throws {
+        let f = try folder()
+        let (state, setURL) = try savedSet(f)
+        state.addHarmony(urls: [f.seconds], toEntry: state.setList!.entries[0].id)
+        state.removeHarmony(voiceID: state.engine.segments[0].voices[1].id)
+        #expect(state.engine.segments[0].voices.count == 1)
+        #expect(try SetList.load(from: setURL).entries[0].harmonies.isEmpty)
+    }
+
+    @Test func aMissingHarmonyDoesntStopTheTune() throws {
+        let f = try folder()
+        let (state, setURL) = try savedSet(f)
+        state.addHarmony(urls: [f.seconds], toEntry: state.setList!.entries[0].id)
+        try FileManager.default.removeItem(at: f.seconds)
+        let reopened = AppState(recents: AppStateTests.scratchRecents())
+        reopened.open(url: setURL)
+        #expect(reopened.engine.segments.count == 2)
+        #expect(reopened.engine.segments[0].voices.count == 1)
+        #expect(reopened.entryProblems.isEmpty)
+    }
+
+    @Test func mutesSurviveASetReload() throws {
+        let f = try folder()
+        let (state, _) = try savedSet(f)
+        state.addHarmony(urls: [f.seconds], toEntry: state.setList!.entries[0].id)
+        let harmonyID = state.engine.segments[0].voices[1].id
+        state.engine.setVoiceMuted(id: harmonyID, muted: true)
+        state.addToSet(urls: [f.a])
+        #expect(state.engine.mutedVoiceIDs.contains(harmonyID))
+    }
+
+    @Test func saveTuneAsSetKeepsItsHarmonies() throws {
+        let f = try folder()
+        let state = AppState(recents: AppStateTests.scratchRecents())
+        state.open(url: f.a)
+        state.addHarmony(urls: [f.seconds])
+        let setURL = f.dir.appendingPathComponent("Pairing.pipeset")
+        try state.saveTuneAsSet(to: setURL)
+        #expect(state.isSet)
+        #expect(state.currentURL == setURL)
+        let saved = try SetList.load(from: setURL)
+        #expect(saved.entries.count == 1)
+        #expect(saved.entries[0].relativePath == "A.bww")
+        #expect(saved.entries[0].harmonies.map(\.relativePath) == ["Seconds.bww"])
+        #expect(state.engine.segments[0].voices.count == 2)
+    }
+}

@@ -82,6 +82,11 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         segments.isEmpty ? nil : segments[currentSegmentIndex].voices.first?.tune.title
     }
 
+    /// The voices of the tune at the playhead — what the mute row shows.
+    var currentVoices: [Voice] {
+        segments.isEmpty ? [] : segments[currentSegmentIndex].voices
+    }
+
     /// The tune at the playhead's composer.
     var currentComposer: String? {
         segments.isEmpty ? nil : segments[currentSegmentIndex].voices.first?.tune.composer
@@ -368,11 +373,15 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         )])
     }
 
-    func load(segments newSegments: [PlaybackSegment]) {
+    /// - Parameter keepingMutes: keep mutes on voices that are still there
+    ///   (a set reloaded after an edit) instead of clearing them.
+    func load(segments newSegments: [PlaybackSegment], keepingMutes: Bool = false) {
+        let previousMutes = mutedVoiceIDs
         stop()
         segments = newSegments
         voices = newSegments.count == 1 ? newSegments[0].voices : []
-        mutedVoiceIDs = []
+        let ids = Set(newSegments.flatMap { $0.voices.map(\.id) })
+        mutedVoiceIDs = keepingMutes ? previousMutes.intersection(ids) : []
         loopedPartIndex = loopMode == .part ? 0 : nil
         rebuildEvents(preservingPosition: false)
     }
