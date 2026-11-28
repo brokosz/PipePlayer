@@ -226,6 +226,77 @@ struct PlaybackEngineTests {
         #expect(engine.loopMode == .part)
     }
 
+    // MARK: - Segments (set lists)
+
+    /// One part, four one-beat notes, at `tempo`.
+    private func segment(_ pitch: Pitch, tempo: Double) -> PlaybackSegment {
+        let tune = Tune(
+            title: "\(pitch)", composer: nil, tempo: tempo, timeSignature: "4/4",
+            parts: [TunePart(measures: [Measure(notes: Array(repeating: NoteEvent(pitch: pitch, duration: 1, embellishment: nil), count: 4))])]
+        )
+        return PlaybackSegment(voices: [Voice(id: "melody", name: "Melody", tune: tune)], tempo: tempo, displayTempoScaleFactor: 1)
+    }
+
+    private func twoTuneSet() -> PlaybackEngine {
+        let engine = PlaybackEngine()
+        engine.load(segments: [segment(.lowA, tempo: 60), segment(.d, tempo: 120)])
+        return engine
+    }
+
+    @Test func segmentsPlayBackToBack() {
+        let engine = twoTuneSet()
+        #expect(engine.segmentStarts == [0, 4])
+        #expect(engine.duration == 6)
+    }
+
+    @Test func theJoinHasNoGap() {
+        let engine = twoTuneSet()
+        let lastOffOfA = engine.events.last { $0.kind == .noteOff && $0.note == UInt8(Pitch.lowA.rawValue) }
+        let firstOnOfB = engine.events.first { $0.kind == .noteOn && $0.note == UInt8(Pitch.d.rawValue) }
+        #expect(lastOffOfA?.time == 4)
+        #expect(firstOnOfB?.time == 4)
+    }
+
+    @Test func tempoFollowsThePlayhead() {
+        let engine = twoTuneSet()
+        engine.seek(to: 1)
+        #expect(engine.tempo == 60)
+        engine.seek(to: 5)
+        #expect(engine.tempo == 120)
+        #expect(engine.currentSegmentIndex == 1)
+    }
+
+    @Test func changingTempoOnlyMovesTheCurrentTune() {
+        let engine = twoTuneSet()
+        var reported: (Int, Double)?
+        engine.onSegmentTempoChange = { reported = ($0, $1) }
+        engine.seek(to: 5)
+        engine.tempo = 60
+        #expect(engine.segmentStarts == [0, 4])
+        #expect(engine.currentTime == 6)
+        #expect(engine.duration == 8)
+        #expect(reported?.0 == 1)
+        #expect(reported?.1 == 60)
+    }
+
+    @Test func partLoopWorksInTheSecondTune() {
+        let engine = twoTuneSet()
+        engine.seek(to: 5)
+        engine.cycleLoopMode()
+        engine.cycleLoopMode()
+        #expect(engine.loopRange == 4..<6)
+    }
+
+    @Test func singleTuneTimelineMatchesPlayOrder() {
+        let engine = PlaybackEngine()
+        let tune = segment(.lowA, tempo: 90).voices[0].tune
+        engine.load(voices: [Voice(id: "melody", name: "Melody", tune: tune)])
+        let expanded = EmbellishmentExpander.expand(tune: PerformanceStyle.apply(to: tune))
+        #expect(engine.partTimeline == PlayOrder.timeline(of: expanded, tempo: 90))
+        #expect(engine.segments.count == 1)
+        #expect(engine.voices.count == 1)
+    }
+
     @Test func scaledEventsLeavesNoteOnVelocityAtFullScale() {
         let events = [ScheduledMIDIEvent(time: 0, kind: .noteOn, note: 69, velocity: 100)]
         let result = PlaybackEngine.scaledEvents(events, velocityScale: 1.0)

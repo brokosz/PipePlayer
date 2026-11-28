@@ -264,4 +264,14 @@ struct PartStructureTests {
         #expect(part.passProgress(at: 7) == (1, 1))
         #expect(part.passProgress(at: -1) == (0, 0))
     }
+
+    @Test func offsetShiftsEveryPass() {
+        let timing = PlayOrder.PartTiming(partIndex: 1, passes: [0..<2, 2..<4], writtenBeats: 4)
+        let shifted = timing.offset(by: 10, tuneIndex: 2)
+        #expect(shifted.passes == [10..<12, 12..<14])
+        #expect(shifted.tuneIndex == 2)
+        #expect(shifted.partIndex == 1)
+        #expect(shifted.writtenBeats == 4)
+    }
 }
+

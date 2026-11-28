@@ -49,6 +49,19 @@ enum PlayOrder {
         /// The part's length on the page, both endings included — what its
         /// segment's width is drawn from.
         let writtenBeats: Double
+        /// Which tune of a set this part belongs to (0 for a single tune).
+        var tuneIndex: Int = 0
+
+        /// The same part, moved to start `offset` seconds later — where its
+        /// tune falls in a set.
+        func offset(by offset: TimeInterval, tuneIndex: Int) -> PartTiming {
+            PartTiming(
+                partIndex: partIndex,
+                passes: passes.map { ($0.lowerBound + offset)..<($0.upperBound + offset) },
+                writtenBeats: writtenBeats,
+                tuneIndex: tuneIndex
+            )
+        }
 
         var start: TimeInterval { passes.first?.lowerBound ?? 0 }
         var end: TimeInterval { passes.last?.upperBound ?? 0 }

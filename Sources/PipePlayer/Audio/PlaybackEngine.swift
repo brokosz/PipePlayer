@@ -24,6 +24,14 @@ private struct UncheckedSendableBox<T>: @unchecked Sendable {
     init(_ value: T) { self.value = value }
 }
 
+/// One tune as loaded for playback: its voices and the tempo it plays at.
+/// A set is several of these, back to back.
+struct PlaybackSegment: Equatable {
+    var voices: [Voice]
+    var tempo: Double
+    var displayTempoScaleFactor: Double
+}
+
 /// Owns the audio graph (a bagpipe-timbre `AVAudioUnitSampler`) and the
 /// transport state (play/pause/stop/seek/tempo/volume/loop) that the UI binds
 /// to. Both local audio and MIDI-out are driven from the same
@@ -50,15 +58,47 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     /// seeking/pausing/muting mid-export would corrupt the recorded file.
     @Published private(set) var isExporting = false
     @Published private(set) var exportProgress: Double = 0
-    @Published var tempo: Double = 90 {
-        didSet {
-            // Keep the playhead at the same place in the music, not the
-            // same number of seconds in — otherwise speeding up jumps
-            // forward, and a part loop can land outside its own part.
-            if oldValue > 0, tempo > 0, oldValue != tempo {
-                currentTime *= oldValue / tempo
+    /// What's loaded, as a list of tunes played back to back — one for a
+    /// single tune, several for a set. Each keeps its own voices and tempo;
+    /// events and the part timeline are built per tune and laid end to end,
+    /// so the scheduler plays a set as one gap-free run.
+    @Published private(set) var segments: [PlaybackSegment] = []
+    /// When each segment starts, in seconds.
+    private(set) var segmentStarts: [TimeInterval] = []
+    /// Told the segment index and new tempo whenever `tempo` is changed —
+    /// how a set remembers each tune's tempo.
+    var onSegmentTempoChange: ((Int, Double) -> Void)?
+    /// Tempo kept for when nothing is loaded.
+    private var unloadedTempo: Double = 90
+
+    /// The segment the playhead is in (the last one once past the end).
+    var currentSegmentIndex: Int {
+        segmentStarts.lastIndex { $0 <= currentTime } ?? 0
+    }
+
+    /// The tempo of the tune at the playhead. Changing it keeps the
+    /// playhead at the same place in that tune's music, not the same number
+    /// of seconds in — otherwise speeding up jumps forward, and a part loop
+    /// can land outside its own part. Earlier tunes in a set don't move.
+    var tempo: Double {
+        get { segments.isEmpty ? unloadedTempo : segments[currentSegmentIndex].tempo }
+        set {
+            guard !segments.isEmpty else {
+                objectWillChange.send()
+                unloadedTempo = newValue
+                return
             }
+            let index = currentSegmentIndex
+            let oldValue = segments[index].tempo
+            guard newValue != oldValue else { return }
+            objectWillChange.send()
+            let start = segmentStarts.indices.contains(index) ? segmentStarts[index] : 0
+            if oldValue > 0, newValue > 0 {
+                currentTime = start + (currentTime - start) * oldValue / newValue
+            }
+            segments[index].tempo = newValue
             rebuildEvents(preservingPosition: true)
+            onSegmentTempoChange?(index, newValue)
         }
     }
     /// `tempo` ÷ this factor is what the UI shows/edits — undoes whatever
@@ -67,7 +107,9 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     /// tempo field shows the number a player actually wrote/expects (e.g.
     /// 132 for a jig) while `tempo` itself keeps driving playback at the
     /// real speed (e.g. 198).
-    private var displayTempoScaleFactor = 1.0
+    private var displayTempoScaleFactor: Double {
+        segments.isEmpty ? 1.0 : segments[currentSegmentIndex].displayTempoScaleFactor
+    }
     @Published var volume: Float = 0.8 {
         didSet { sampler.volume = volume }
     }
@@ -304,12 +346,23 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     }
 
     func load(voices newVoices: [Voice]) {
+        guard let first = newVoices.first else {
+            load(segments: [])
+            return
+        }
+        load(segments: [PlaybackSegment(
+            voices: newVoices,
+            tempo: first.tune.tempo,
+            displayTempoScaleFactor: first.displayTempoScaleFactor
+        )])
+    }
+
+    func load(segments newSegments: [PlaybackSegment]) {
         stop()
-        voices = newVoices
+        segments = newSegments
+        voices = newSegments.count == 1 ? newSegments[0].voices : []
         mutedVoiceIDs = []
         loopedPartIndex = loopMode == .part ? 0 : nil
-        displayTempoScaleFactor = newVoices.first?.displayTempoScaleFactor ?? 1.0
-        tempo = newVoices.first?.tune.tempo ?? 90
         rebuildEvents(preservingPosition: false)
     }
 
@@ -372,19 +425,42 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         // velocity; harmonies stay tempered by harmonyVoiceVelocityScale
         // alone. Real ensembles genuinely do get louder with more parts
         // playing together — that's expected, not a bug to compensate away.
-        let perVoiceEvents = voices.enumerated().map { index, voice -> (id: String, events: [ScheduledMIDIEvent]) in
-            let rawEvents = MIDIEventBuilder.buildEvents(for: voice.tune, tempoOverride: tempo)
-            let relativeScale = index == 0 ? 1.0 : Self.harmonyVoiceVelocityScale
-            let channel = UInt8(min(index, Int(Self.maxVoiceChannel)))
-            var scaledEvents = Self.scaledEvents(rawEvents, velocityScale: relativeScale)
-            for i in scaledEvents.indices { scaledEvents[i].channel = channel }
-            return (voice.id, scaledEvents)
+        var allEvents: [ScheduledMIDIEvent] = []
+        var starts: [TimeInterval] = []
+        var timeline: [PlayOrder.PartTiming] = []
+        var cursor: TimeInterval = 0
+        var end: TimeInterval = 0
+        for (segmentIndex, segment) in segments.enumerated() {
+            starts.append(cursor)
+            // Timed from exactly what MIDIEventBuilder plays (pointing and
+            // grace notes applied), so seams and the bar line up with audio.
+            let melodyTimeline = segment.voices.first.map {
+                PlayOrder.timeline(of: EmbellishmentExpander.expand(tune: PerformanceStyle.apply(to: $0.tune)), tempo: segment.tempo)
+            } ?? []
+            timeline += melodyTimeline.map { $0.offset(by: cursor, tuneIndex: segmentIndex) }
+            var longestVoice: TimeInterval = 0
+            for (index, voice) in segment.voices.enumerated() {
+                let rawEvents = MIDIEventBuilder.buildEvents(for: voice.tune, tempoOverride: segment.tempo)
+                longestVoice = max(longestVoice, MIDIEventBuilder.totalDuration(of: rawEvents))
+                guard !mutedVoiceIDs.contains(voice.id) else { continue }
+                let relativeScale = index == 0 ? 1.0 : Self.harmonyVoiceVelocityScale
+                let channel = UInt8(min(index, Int(Self.maxVoiceChannel)))
+                var scaledEvents = Self.scaledEvents(rawEvents, velocityScale: relativeScale)
+                for i in scaledEvents.indices {
+                    scaledEvents[i].channel = channel
+                    scaledEvents[i].time += cursor
+                }
+                allEvents += scaledEvents
+            }
+            end = max(end, cursor + longestVoice)
+            // The next tune comes in where this one's melody ends — on the
+            // next beat, no gap.
+            cursor += melodyTimeline.last?.end ?? longestVoice
         }
-        duration = perVoiceEvents.map { MIDIEventBuilder.totalDuration(of: $0.events) }.max() ?? 0
-        events = perVoiceEvents
-            .filter { !mutedVoiceIDs.contains($0.id) }
-            .flatMap(\.events)
-            .sorted { $0.time < $1.time }
+        segmentStarts = starts
+        partTimeline = timeline
+        duration = max(end, cursor)
+        events = allEvents.sorted { $0.time < $1.time }
         if !preservingPosition {
             currentTime = 0
         } else if state == .playing {
@@ -416,18 +492,20 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
     /// order the audio is built from, so the seam lands where it's heard.
     var loopRange: Range<TimeInterval>? {
         guard loopMode == .part, let index = loopedPartIndex,
-              let part = partTimeline.first(where: { $0.partIndex == index }),
-              part.end > part.start else { return nil }
+              partTimeline.indices.contains(index) else { return nil }
+        let part = partTimeline[index]
+        guard part.end > part.start else { return nil }
         return part.start..<part.end
     }
 
-    private var partTimeline: [PlayOrder.PartTiming] {
-        guard let tune = voices.first?.tune else { return [] }
-        return PlayOrder.timeline(of: tune, tempo: tempo)
-    }
+    /// Every part of everything loaded, in play order and timed as heard —
+    /// what the progress bar draws and part looping uses. `loopedPartIndex`
+    /// indexes into this.
+    private(set) var partTimeline: [PlayOrder.PartTiming] = []
 
     private func partIndex(at time: TimeInterval) -> Int? {
-        PlayOrder.activePart(in: partTimeline, at: time)?.partIndex
+        guard !partTimeline.isEmpty else { return nil }
+        return partTimeline.firstIndex { time >= $0.start && time < $0.end } ?? partTimeline.count - 1
     }
 
     private func restartSchedulerIfPlaying() {
