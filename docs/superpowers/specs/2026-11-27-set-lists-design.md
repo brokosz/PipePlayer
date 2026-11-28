@@ -18,8 +18,6 @@ comes in on the next beat, no pause.
 
 - Playing a tune more than once before moving on.
 - Count-ins, gaps or crossfades between tunes.
-- Harmony voices inside a set (sets play each tune's own voices only;
-  Add Harmony is off in a set tab).
 
 ## Approaches
 
@@ -74,3 +72,23 @@ Where a set lives:
 
 List styling and row height; whether the list scrolls or the window grows;
 the exact JSON keys.
+
+## Amendment (2026-11-27): harmonies in sets
+
+Reverses the original non-goal. Any tune in a set can carry harmonies, and
+the set remembers them — for a one-tune "pairing" (melody + seconds saved
+together) as much as a TLM.
+
+- **File:** each entry gains `harmonies` — each a relative path + bookmark,
+  same as tunes. Files without the key still open.
+- **Pairing:** in a tune tab with harmonies, File → Save as Set… saves a
+  one-tune set with them; the tab becomes that set.
+- **Adding in a set:** right-click a row → Add Harmony…; the Add Harmony
+  menu item and the right half of a drop attach to the tune at the playhead.
+  Harmony names are listed under their tune's row.
+- **Mute and remove:** the voice row shows in set tabs, for the tune at the
+  playhead. Each harmony has a checkbox to mute it and a visible × to remove
+  it (single-tune tabs too; right-click still works). Removing in a set
+  removes it from the file.
+- **Mutes aren't saved in the file:** they last for the tab's session.
+
