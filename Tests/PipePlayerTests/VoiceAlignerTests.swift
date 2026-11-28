@@ -91,14 +91,27 @@ struct VoiceAlignerTests {
     }
 
     @Test func fitScalesAMismatchedPartAsAWhole() {
-        let melody = tune([TunePart(measures: bars(10, endings: [9: [2]]), hasRepeat: true)])
+        let melody = tune([TunePart(measures: bars(10))])
         let harmony = tune([TunePart(measures: bars(8, endings: [7: [2]]))])
         let fitted = VoiceAligner.fit(harmony, to: melody)
         let part = fitted.parts[0]
         #expect(part.measures.count == 8)
         #expect(abs(PlayOrder.beats(of: part.measures) - 20) < 0.0001)
         #expect(part.measures.allSatisfy { $0.endingNumbers.isEmpty })
-        #expect(part.hasRepeat)
+    }
+
+    /// A repeated melody part with 1st/2nd endings plays fewer bars each
+    /// pass than it has written; a mismatched harmony is laid out pass by
+    /// pass, each matching that pass's length, so it can't drift.
+    @Test func fitPlaysAMismatchedRepeatedPartPassByPass() {
+        let melody = tune([TunePart(measures: bars(10, endings: [8: [1], 9: [2]]), hasRepeat: true)])
+        let harmony = tune([TunePart(measures: bars(8))])
+        let fitted = VoiceAligner.fit(harmony, to: melody)
+        let part = fitted.parts[0]
+        #expect(!part.hasRepeat)
+        #expect(part.measures.count == 16)
+        #expect(abs(PlayOrder.beats(of: Array(part.measures.prefix(8))) - 18) < 0.0001)
+        #expect(abs(PlayOrder.beats(of: part.measures) - 36) < 0.0001)
     }
 
     @Test func fitDropsExtraHarmonyParts() {

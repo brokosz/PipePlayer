@@ -65,17 +65,23 @@ final class NowPlayingController {
 
     private func observeEngine() {
         guard let engine else { return }
-        Publishers.CombineLatest4(engine.$state, engine.$currentTime, engine.$duration, engine.$voices)
+        // `$segments` rather than `$voices`: a set has no single voice list,
+        // and without a title the app stops being a media-key target.
+        Publishers.CombineLatest4(engine.$state, engine.$currentTime, engine.$duration, engine.$segments)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] state, currentTime, duration, voices in
-                self?.publishNowPlayingInfo(state: state, currentTime: currentTime, duration: duration, voices: voices)
+            .sink { [weak self] state, currentTime, duration, _ in
+                guard let engine = self?.engine else { return }
+                self?.publishNowPlayingInfo(
+                    state: state, currentTime: currentTime, duration: duration,
+                    title: engine.currentTitle, composer: engine.currentComposer
+                )
             }
             .store(in: &cancellables)
     }
 
-    private func publishNowPlayingInfo(state: PlaybackState, currentTime: TimeInterval, duration: TimeInterval, voices: [Voice]) {
+    private func publishNowPlayingInfo(state: PlaybackState, currentTime: TimeInterval, duration: TimeInterval, title: String?, composer: String?) {
         let center = MPNowPlayingInfoCenter.default()
-        guard let title = voices.first?.tune.title else {
+        guard let title else {
             center.nowPlayingInfo = nil
             center.playbackState = .unknown
             return
@@ -86,7 +92,7 @@ final class NowPlayingController {
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyPlaybackRate: state == .playing ? 1.0 : 0.0
         ]
-        if let composer = voices.first?.tune.composer, !composer.isEmpty {
+        if let composer, !composer.isEmpty {
             info[MPMediaItemPropertyArtist] = composer
         }
         center.nowPlayingInfo = info

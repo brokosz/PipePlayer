@@ -171,7 +171,9 @@ final class AppState: ObservableObject {
         voices = combined
         engine.load(voices: combined)
         if engine.tempo != tempo { engine.tempo = tempo }
-        for id in mutes where combined.contains(where: { $0.id == id }) {
+        // With the harmony gone there's no mute row to undo a muted melody
+        // with — it would leave a silent tab — so mutes go with the last one.
+        for id in mutes where !harmonies.isEmpty && combined.contains(where: { $0.id == id }) {
             engine.setVoiceMuted(id: id, muted: true)
         }
         engine.seek(to: time)
@@ -307,12 +309,19 @@ final class AppState: ObservableObject {
                 problems[entry.id] = error.localizedDescription
             }
         }
+        let previousIDs = segmentEntryIDs
         segmentEntryIDs = ids
         segmentTitles = titles
         entryProblems = problems
         engine.load(segments: segments)
         if let playingID, let newIndex = ids.firstIndex(of: playingID) {
             engine.seek(to: engine.segmentStarts[newIndex] + offset)
+            if wasPlaying { engine.play() }
+        } else if playingID != nil, let playingEntry = previousIDs.firstIndex(of: playingID!),
+                  let next = previousIDs[(playingEntry + 1)...].first(where: { ids.contains($0) }),
+                  let nextIndex = ids.firstIndex(of: next) {
+            // The playing tune was removed: carry on from the next one.
+            engine.seek(to: engine.segmentStarts[nextIndex])
             if wasPlaying { engine.play() }
         }
     }

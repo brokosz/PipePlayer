@@ -236,6 +236,14 @@ struct HarmonyTests {
         #expect(state.engine.mutedVoiceIDs.contains(state.voices[0].id))
     }
 
+    @Test func removingTheLastHarmonyUnmutesTheMelody() throws {
+        let state = try stateWithMelody()
+        state.addHarmony(urls: [try Self.writeTune(named: "Seconds.bww")])
+        state.engine.setVoiceMuted(id: state.voices[0].id, muted: true)
+        state.removeHarmony(voiceID: state.voices[1].id)
+        #expect(state.engine.mutedVoiceIDs.isEmpty)
+    }
+
     @Test func removeHarmonyRemovesItsVoices() throws {
         let state = try stateWithMelody()
         state.addHarmony(urls: [try Self.writeTune(named: "Seconds.bww")])
@@ -346,6 +354,19 @@ struct SetModeTests {
         state.removeFromSet(id: state.setList!.entries[1].id)
         #expect(state.engine.currentTime == 0)
         #expect(state.engine.segments.count == 1)
+    }
+
+    @Test func removingThePlayingTuneMovesOnToTheNext() throws {
+        let (dir, a, b) = try folderWithTunes()
+        let c = dir.appendingPathComponent("C.bww")
+        try FileManager.default.copyItem(at: a, to: c)
+        let state = newState()
+        state.newSet()
+        state.addToSet(urls: [a, b, c])
+        state.engine.seek(to: state.engine.segmentStarts[1] + 0.1)
+        state.removeFromSet(id: state.setList!.entries[1].id)
+        #expect(state.engine.segments.count == 2)
+        #expect(state.engine.currentTime == state.engine.segmentStarts[1])
     }
 
     @Test func removingAnEarlierTuneKeepsThePlace() throws {

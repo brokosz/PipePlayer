@@ -287,6 +287,23 @@ struct PlaybackEngineTests {
         #expect(engine.loopRange == 4..<6)
     }
 
+    /// What Now Playing and export name — the tune at the playhead, so a
+    /// set (which has no single `voices` list) still has one.
+    @Test func currentTitleFollowsThePlayhead() {
+        let engine = twoTuneSet()
+        #expect(engine.currentTitle == "lowA")
+        engine.seek(to: 5)
+        #expect(engine.currentTitle == "d")
+    }
+
+    /// A focused tempo field commits only what the user typed — not a
+    /// value left over from the previous tune in a set.
+    @Test func tempoDraftCommitsOnlyEdits() {
+        #expect(TempoDraft.valueToCommit(draft: "90", original: "90") == nil)
+        #expect(TempoDraft.valueToCommit(draft: "84", original: "90") == 84)
+        #expect(TempoDraft.valueToCommit(draft: "x", original: "90") == nil)
+    }
+
     @Test func singleTuneTimelineMatchesPlayOrder() {
         let engine = PlaybackEngine()
         let tune = segment(.lowA, tempo: 90).voices[0].tune

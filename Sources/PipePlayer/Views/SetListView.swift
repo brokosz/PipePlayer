@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A set's tunes, in play order — shown only in a tab holding a set.
-/// Selecting a row jumps to that tune; rows drag to reorder; + adds tunes
+/// Clicking a row jumps to that tune; rows drag to reorder; + adds tunes
 /// and − removes the selected one.
 struct SetListView: View {
     @ObservedObject var appState: AppState
@@ -15,6 +15,10 @@ struct SetListView: View {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { number, entry in
                     row(number: number + 1, entry: entry)
                         .tag(entry.id)
+                        .contentShape(Rectangle())
+                        // Every click jumps, even on the row already
+                        // selected; selection itself only picks what − removes.
+                        .simultaneousGesture(TapGesture().onEnded { jump(to: entry.id) })
                 }
                 .onMove { appState.moveSetEntries(from: $0, to: $1) }
             }
@@ -48,11 +52,12 @@ struct SetListView: View {
             .buttonStyle(.borderless)
             .padding(.top, 4)
         }
-        .onChange(of: selection) { id in
-            guard let id, let segment = appState.segmentIndex(ofEntry: id),
-                  engine.segmentStarts.indices.contains(segment) else { return }
-            engine.seek(to: engine.segmentStarts[segment])
-        }
+    }
+
+    private func jump(to id: UUID) {
+        guard let segment = appState.segmentIndex(ofEntry: id),
+              engine.segmentStarts.indices.contains(segment) else { return }
+        engine.seek(to: engine.segmentStarts[segment])
     }
 
     private func row(number: Int, entry: SetList.Entry) -> some View {

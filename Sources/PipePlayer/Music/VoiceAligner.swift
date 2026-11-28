@@ -71,9 +71,9 @@ enum VoiceAligner {
     ///
     /// Same bar count: each bar takes its melody bar's endings and length.
     /// Different count (Highland Cradle Song, 10 bars against 8 — pickups
-    /// and endings written differently): the part is scaled as a whole to
-    /// the melody part's written length and plays every pass in full, so
-    /// the mismatch can't spill into later parts. Extra harmony parts are
+    /// and endings written differently): the harmony part is written out
+    /// once per melody pass, each copy scaled to that pass's length, so the
+    /// mismatch can't spill into later parts. Extra harmony parts are
     /// dropped.
     static func fit(_ harmony: Tune, to melody: Tune) -> Tune {
         var fitted = harmony
@@ -89,12 +89,22 @@ enum VoiceAligner {
                     return scaled
                 }
             } else {
-                let target = melodyPart.measures.reduce(0) { $0 + totalBeats(of: $1) }
+                // Laid out pass by pass, each copy matched to what that
+                // pass of the melody actually plays — a repeated part with
+                // 1st/2nd endings plays fewer bars a pass than it has
+                // written, and the two endings needn't be the same length.
+                var single = melody
+                single.parts = [melodyPart]
+                let melodyPasses = PlayOrder.passes(of: single)
                 let current = part.measures.reduce(0) { $0 + totalBeats(of: $1) }
-                result.measures = part.measures.map { measure in
-                    var scaled = scale(measure, by: target, over: current)
-                    scaled.endingNumbers = []
-                    return scaled
+                result.hasRepeat = false
+                result.measures = melodyPasses.flatMap { pass in
+                    let target = pass.measures.reduce(0) { $0 + totalBeats(of: $1) }
+                    return part.measures.map { measure in
+                        var scaled = scale(measure, by: target, over: current)
+                        scaled.endingNumbers = []
+                        return scaled
+                    }
                 }
             }
             return result

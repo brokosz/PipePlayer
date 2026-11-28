@@ -15,6 +15,9 @@ struct TransportControlsView: View {
     @State private var scrubberValue: TimeInterval = 0
     @FocusState private var isTempoFieldFocused: Bool
     @State private var tempoDraftText: String = ""
+    /// What the tempo field showed when it gained focus — a commit applies
+    /// only if the user changed it.
+    @State private var tempoShownAtFocus: String = ""
     @State private var exportErrorMessage: String?
 
     private var loopHelp: String {
@@ -109,7 +112,19 @@ struct TransportControlsView: View {
                 tempoDraftText = String(Int(newValue.rounded()))
             }
             .onChange(of: isTempoFieldFocused) { focused in
-                if !focused { commitTempoDraft() }
+                if focused {
+                    tempoShownAtFocus = tempoDraftText
+                } else {
+                    commitTempoDraft()
+                }
+            }
+            .onChange(of: engine.currentSegmentIndex) { _ in
+                // Crossing into the next tune of a set: show its tempo and
+                // drop any untouched draft of the previous one.
+                if tempoDraftText == tempoShownAtFocus || !isTempoFieldFocused {
+                    tempoDraftText = String(Int(engine.displayTempo.rounded()))
+                    tempoShownAtFocus = tempoDraftText
+                }
             }
 
             LabeledContent("Volume") {
@@ -227,7 +242,7 @@ struct TransportControlsView: View {
     private func presentExportPanel(format: AudioExportFormat) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [format.contentType]
-        panel.nameFieldStringValue = (engine.voices.first?.tune.title ?? "Export") + "." + format.fileExtension
+        panel.nameFieldStringValue = (engine.currentTitle ?? "Export") + "." + format.fileExtension
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         engine.exportAudio(to: url, format: format) { result in
@@ -267,12 +282,11 @@ struct TransportControlsView: View {
     /// silences/restarts mid-note if a tune is playing. A plain `String`
     /// draft that's only parsed and applied here avoids that entirely.
     private func commitTempoDraft() {
-        guard let parsed = Int(tempoDraftText) else {
-            tempoDraftText = String(Int(engine.displayTempo.rounded()))
-            return
+        if let parsed = TempoDraft.valueToCommit(draft: tempoDraftText, original: tempoShownAtFocus) {
+            engine.displayTempo = Double(Self.tempoRange.clamp(parsed))
         }
-        engine.displayTempo = Double(Self.tempoRange.clamp(parsed))
         tempoDraftText = String(Int(engine.displayTempo.rounded()))
+        tempoShownAtFocus = tempoDraftText
     }
 
     private var scrubber: some View {
@@ -314,5 +328,16 @@ struct TransportControlsView: View {
     private func formatted(_ time: TimeInterval) -> String {
         let total = Int(time.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+/// The tempo field's commit rule, kept off the view (main-actor under CI).
+enum TempoDraft {
+    /// The tempo to apply when the field loses focus or is submitted: only
+    /// when the user changed what it showed, so a value left over from the
+    /// previous tune in a set is never written onto the next one.
+    static func valueToCommit(draft: String, original: String) -> Int? {
+        guard draft != original else { return nil }
+        return Int(draft)
     }
 }

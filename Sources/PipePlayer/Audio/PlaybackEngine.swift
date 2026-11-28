@@ -76,6 +76,17 @@ final class PlaybackEngine: ObservableObject, @unchecked Sendable {
         segmentStarts.lastIndex { $0 <= currentTime } ?? 0
     }
 
+    /// The tune at the playhead's title — for Now Playing and export names,
+    /// since a set has no single `voices` list.
+    var currentTitle: String? {
+        segments.isEmpty ? nil : segments[currentSegmentIndex].voices.first?.tune.title
+    }
+
+    /// The tune at the playhead's composer.
+    var currentComposer: String? {
+        segments.isEmpty ? nil : segments[currentSegmentIndex].voices.first?.tune.composer
+    }
+
     /// The tempo of the tune at the playhead. Changing it keeps the
     /// playhead at the same place in that tune's music, not the same number
     /// of seconds in — otherwise speeding up jumps forward, and a part loop
