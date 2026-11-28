@@ -69,7 +69,8 @@ enum VoiceAligner {
     /// Seconds files often leave the repeat marks off (Cullen Bay), and
     /// their stated tempo needn't match (Loch Rannoch: 90 against 69).
     ///
-    /// Same bar count: each bar takes its melody bar's endings and length.
+    /// Same bar count: each bar takes its melody bar's endings and length,
+    /// filled by holding or cutting its last note (`fill`).
     /// Different count (Highland Cradle Song, 10 bars against 8 — pickups
     /// and endings written differently): the harmony part is written out
     /// once per melody pass, each copy scaled to that pass's length, so the
@@ -84,7 +85,7 @@ enum VoiceAligner {
             result.rhythm = melodyPart.rhythm
             if part.measures.count == melodyPart.measures.count {
                 result.measures = zip(part.measures, melodyPart.measures).map { measure, melodyMeasure in
-                    var scaled = scale(measure, by: totalBeats(of: melodyMeasure), over: totalBeats(of: measure))
+                    var scaled = fill(measure, to: totalBeats(of: melodyMeasure))
                     scaled.endingNumbers = melodyMeasure.endingNumbers
                     return scaled
                 }
@@ -110,6 +111,23 @@ enum VoiceAligner {
             return result
         }
         return fitted
+    }
+
+    /// Makes a harmony bar last `target` beats the way a player would:
+    /// every note where it's written, the last one held longer or cut
+    /// shorter. A bar that's off is usually a slip in one file (Cullen Bay's
+    /// melody has a stray eighth in a 5/4 bar), and stretching every note
+    /// would put each one off the melody's beat. Falls back to stretching
+    /// when the last note is too short to absorb the difference.
+    private static func fill(_ measure: Measure, to target: Double) -> Measure {
+        let current = totalBeats(of: measure)
+        let difference = target - current
+        guard abs(difference) > 0.0001, let last = measure.notes.last else { return measure }
+        let lastBeats = last.duration * (last.isDotted ? 1.5 : 1.0)
+        guard lastBeats + difference > 0.0001 else { return scale(measure, by: target, over: current) }
+        var filled = measure
+        filled.notes[filled.notes.count - 1].duration = (lastBeats + difference) / (last.isDotted ? 1.5 : 1.0)
+        return filled
     }
 
     private static func scale(_ measure: Measure, by target: Double, over current: Double) -> Measure {

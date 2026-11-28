@@ -77,7 +77,12 @@ struct ContentView: View {
             }
         }
         .padding()
-        .frame(minWidth: 480, minHeight: 460)
+        // The window's minimum height is whatever the content needs; it can
+        // still grow taller. A fixed minimum let the window get shorter than
+        // its content (more so with the tab bar showing, or a set list), and
+        // SwiftUI then clipped both the heading and the bottom controls.
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(minWidth: 480, minHeight: 460, maxHeight: .infinity, alignment: .top)
         .navigationTitle(windowTitle)
         .background(dropHighlightOverlay)
         .background(WindowAccessor { appState.window = $0 })
@@ -207,7 +212,7 @@ struct ContentView: View {
             Text("Open or drop an .abc, .bww, .bmw, .musicxml, or .mxl file to play it.")
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, minHeight: 360)
     }
 
     @ViewBuilder

@@ -90,6 +90,24 @@ struct VoiceAlignerTests {
         #expect(fitted.parts[0].measures.map { $0.endingNumbers } == [[], [], [1], [2]])
     }
 
+    /// Cullen Bay: the melody's bar 1 has a stray extra eighth (5½ beats in
+    /// 5/4) and the seconds' bar has the correct 5. Stretching every
+    /// harmony note smeared them off the melody's beats; holding the last
+    /// note keeps every other note where it's written.
+    @Test func fitHoldsTheLastNoteToFillALongerBar() {
+        let melody = tune([TunePart(measures: [Measure(notes: [note(.lowA, 1), note(.b, 1), note(.c, 1.5), note(.lowA, 2)])])])
+        let harmony = tune([TunePart(measures: [Measure(notes: [note(.c, 1), note(.d, 1), note(.e, 1), note(.c, 2)])])])
+        let notes = VoiceAligner.fit(harmony, to: melody).parts[0].measures[0].notes
+        #expect(notes.map(\.duration) == [1, 1, 1, 2.5])
+    }
+
+    @Test func fitShortensTheLastNoteForAShorterBar() {
+        let melody = tune([TunePart(measures: [Measure(notes: [note(.lowA, 1), note(.b, 1), note(.c, 2)])])])
+        let harmony = tune([TunePart(measures: [Measure(notes: [note(.c, 1), note(.d, 1), note(.e, 2.5)])])])
+        let notes = VoiceAligner.fit(harmony, to: melody).parts[0].measures[0].notes
+        #expect(notes.map(\.duration) == [1, 1, 2])
+    }
+
     @Test func fitScalesAMismatchedPartAsAWhole() {
         let melody = tune([TunePart(measures: bars(10))])
         let harmony = tune([TunePart(measures: bars(8, endings: [7: [2]]))])
