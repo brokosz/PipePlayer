@@ -3,6 +3,8 @@
 A free Mac app that plays bagpipe tune files out loud. No pipes or practice
 chanter needed.
 
+**[brokosz.github.io/PipePlayer](https://brokosz.github.io/PipePlayer/)** — hear it before you download.
+
 It opens tunes from **Bagpipe Music Writer**, **Bagpipe Musicworks Gold**,
 **Bagpipe Reader**, **Ensemble**, or anything that exports **MusicXML**, and
 plays them with the grace notes, doublings, throws, and other Highland
@@ -38,8 +40,9 @@ Download the latest build from the
 drag `PipePlayer.app` into Applications.
 
 It's not from the App Store, so the first launch gets an "unidentified
-developer" warning. Control-click the app and choose **Open**. You only have
-to do this once.
+developer" warning. Control-click the app and choose **Open**. On macOS 15
+or later, try opening it once, then go to **System Settings → Privacy &
+Security** and click **Open Anyway**. You only have to do this once.
 
 ## Using it
 

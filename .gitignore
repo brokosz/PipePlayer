@@ -10,3 +10,4 @@ dist/
 # git (large binary, not something to publish to the repo). package_app.sh
 # and Package.swift's resources both expect it at this path when building.
 Resources/SoundFonts/
+.superpowers/
