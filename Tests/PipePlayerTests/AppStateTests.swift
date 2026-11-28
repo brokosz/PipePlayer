@@ -92,8 +92,7 @@ struct AppStateTests {
 
         let tune = try #require(state.tune)
         let expected = EmbellishmentExpander.expand(tune: PerformanceStyle.apply(to: tune))
-        #expect(state.progressTune == expected)
-        #expect(state.progressTune != EmbellishmentExpander.expand(tune: tune))
+        #expect(state.engine.partTimeline == PlayOrder.timeline(of: expected, tempo: state.engine.tempo))
     }
 }
 

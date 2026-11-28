@@ -10,43 +10,45 @@ import SwiftUI
 /// own arithmetic, counted every measure on every pass (endings included),
 /// and drifted further from the audio after each part with endings.
 struct PartProgressView: View {
-    let tune: Tune
+    /// Every part in play order, timed as heard (`PlaybackEngine.partTimeline`).
+    let timeline: [PlayOrder.PartTiming]
     let currentTime: TimeInterval
-    let tempo: Double
-    /// The part being looped, when the loop button is in part mode.
+    /// Position in `timeline` of the part being looped, in part loop mode.
     var loopedPartIndex: Int? = nil
+    /// A set's tune titles, in order; empty for a single tune.
+    var tuneTitles: [String] = []
     /// Called with a part's start time when the user clicks its segment —
     /// lets the transport seek straight to the beginning of that part.
     var onSeek: (TimeInterval) -> Void = { _ in }
 
-    private var timeline: [PlayOrder.PartTiming] {
-        PlayOrder.timeline(of: tune, tempo: tempo)
-    }
-
     var body: some View {
-        let timeline = self.timeline
         let totalBeats = timeline.reduce(0) { $0 + $1.writtenBeats }
+        let spacing: CGFloat = 3
         VStack(alignment: .leading, spacing: 8) {
             GeometryReader { geo in
-                let spacing: CGFloat = 3
                 let available = max(0, geo.size.width - spacing * CGFloat(max(timeline.count - 1, 0)))
-                HStack(spacing: spacing) {
-                    ForEach(timeline, id: \.partIndex) { part in
-                        let fraction = totalBeats > 0
-                            ? part.writtenBeats / totalBeats
-                            : 1.0 / Double(max(timeline.count, 1))
-                        segment(for: part, width: available * fraction)
+                let width: (PlayOrder.PartTiming) -> CGFloat = { part in
+                    available * (totalBeats > 0 ? part.writtenBeats / totalBeats : 1.0 / Double(max(timeline.count, 1)))
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    if !tuneTitles.isEmpty {
+                        tuneTitleRow(width: width, spacing: spacing)
                     }
+                    HStack(spacing: spacing) {
+                        ForEach(Array(timeline.enumerated()), id: \.offset) { position, part in
+                            segment(for: part, at: position, width: width(part))
+                        }
+                    }
+                    .frame(height: 32)
                 }
             }
-            .frame(height: 32)
+            .frame(height: tuneTitles.isEmpty ? 32 : 52)
 
             HStack(spacing: 4) {
-                if let active = PlayOrder.activePart(in: timeline, at: currentTime),
-                   active.partIndex == loopedPartIndex {
+                if let active = activePosition, active == loopedPartIndex {
                     Image(systemName: "repeat")
                 }
-                Text(currentPartDescription(timeline))
+                Text(currentPartDescription)
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -54,13 +56,44 @@ struct PartProgressView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private func segment(for part: PlayOrder.PartTiming, width: CGFloat) -> some View {
+    /// Position in `timeline` of the part at the playhead.
+    private var activePosition: Int? {
+        guard !timeline.isEmpty else { return nil }
+        return timeline.firstIndex { currentTime >= $0.start && currentTime < $0.end } ?? timeline.count - 1
+    }
+
+    private var activeTuneIndex: Int? {
+        activePosition.map { timeline[$0].tuneIndex }
+    }
+
+    /// One title per tune, spanning that tune's part segments.
+    private func tuneTitleRow(width: @escaping (PlayOrder.PartTiming) -> CGFloat, spacing: CGFloat) -> some View {
+        HStack(spacing: spacing) {
+            ForEach(Array(tuneTitles.enumerated()), id: \.offset) { tuneIndex, title in
+                let parts = timeline.filter { $0.tuneIndex == tuneIndex }
+                let span = parts.reduce(0) { $0 + width($1) } + spacing * CGFloat(max(parts.count - 1, 0))
+                if !parts.isEmpty {
+                    Text(title)
+                        .font(.caption.weight(tuneIndex == activeTuneIndex ? .semibold : .regular))
+                        .foregroundStyle(tuneIndex == activeTuneIndex ? Color.accentColor : Color.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(width: max(0, span), alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onSeek(parts[0].start) }
+                }
+            }
+        }
+        .frame(height: 16)
+    }
+
+    private func segment(for part: PlayOrder.PartTiming, at position: Int, width: CGFloat) -> some View {
         let isActive = currentTime >= part.start && currentTime < part.end
         // A repeated part fills, resets, and fills again — once per pass —
         // each pass measured against its own length, since a first and
         // second ending needn't be the same length.
         let progress = part.passProgress(at: currentTime).fraction
-        let isLooped = part.partIndex == loopedPartIndex
+        let isLooped = position == loopedPartIndex
 
         return ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 5)
@@ -92,12 +125,17 @@ struct PartProgressView: View {
         .help(isLooped ? "Part \(part.partIndex + 1) is looping" : "Jump to Part \(part.partIndex + 1)")
     }
 
-    private func currentPartDescription(_ timeline: [PlayOrder.PartTiming]) -> String {
-        guard let active = PlayOrder.activePart(in: timeline, at: currentTime) else { return "" }
-        var description = "Part \(active.partIndex + 1) of \(timeline.count)"
+    private var currentPartDescription: String {
+        guard let position = activePosition else { return "" }
+        let active = timeline[position]
+        let partCount = timeline.filter { $0.tuneIndex == active.tuneIndex }.count
+        var description = "Part \(active.partIndex + 1) of \(partCount)"
         if active.hasRepeat {
             let pass = active.passProgress(at: currentTime).pass
             description += pass == 0 ? " (repeat, 1st time)" : " (repeat, 2nd time)"
+        }
+        if !tuneTitles.isEmpty {
+            description = "Tune \(active.tuneIndex + 1) of \(tuneTitles.count) · " + description
         }
         return description
     }

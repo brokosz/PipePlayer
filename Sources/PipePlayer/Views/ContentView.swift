@@ -43,9 +43,8 @@ struct ContentView: View {
             Divider()
             if let tune = appState.tune {
                 PartProgressView(
-                    tune: appState.progressTune ?? tune,
+                    timeline: engine.partTimeline,
                     currentTime: engine.currentTime,
-                    tempo: engine.tempo,
                     loopedPartIndex: engine.loopedPartIndex,
                     onSeek: { engine.seek(to: $0) }
                 )

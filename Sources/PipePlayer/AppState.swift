@@ -25,18 +25,6 @@ final class AppState: ObservableObject {
     /// opened again.
     weak var window: NSWindow?
 
-    /// The primary voice's tune with embellishments already expanded —
-    /// what `PartProgressView` measures its part spans against. Grace notes
-    /// add a small sliver of real playback time rather than borrowing it from
-    /// the note they decorate (see `EmbellishmentExpander`), so a progress
-    /// bar computed from *un*-expanded note durations would fall increasingly
-    /// behind the real audio, finishing each part before it's actually done.
-    /// `MIDIEventBuilder` expands internally too — this is computed once
-    /// here (not per SwiftUI body re-render) so both sides agree on the same
-    /// timeline without re-running the expansion dozens of times a second.
-    /// Same goes for `PerformanceStyle`: a pointed strathspey's cuts land
-    /// at different spots inside the beat than written.
-    @Published private(set) var progressTune: Tune?
 
     let engine = PlaybackEngine()
     // Retained here so its Combine subscriptions (which keep the media-key
@@ -90,7 +78,6 @@ final class AppState: ObservableObject {
             harmonies = []
             nextHarmonyNumber = 0
             voices = alignedVoices
-            progressTune = alignedVoices.first.map { EmbellishmentExpander.expand(tune: PerformanceStyle.apply(to: $0.tune)) }
             engine.load(voices: alignedVoices)
             currentURL = url
             if addToRecents { recents.add(url) }
@@ -198,7 +185,6 @@ final class AppState: ObservableObject {
         voices = []
         melodyVoices = []
         harmonies = []
-        progressTune = nil
         currentURL = nil
     }
 }
