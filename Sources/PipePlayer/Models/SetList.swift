@@ -77,7 +77,17 @@ struct SetList: Codable, Equatable {
 
     mutating func addHarmony(_ url: URL, toEntry id: UUID, relativeTo setURL: URL?) {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        entries[index].harmonies.append(FileRef(url, relativeTo: setURL))
+        var ref = FileRef(url, relativeTo: setURL)
+        // The same file again replaces the earlier reference, keeping its id
+        // (and so its mute), rather than doubling it.
+        if let existing = entries[index].harmonies.firstIndex(where: {
+            self.url(for: $0, relativeTo: setURL)?.isSameFile(as: url) ?? false
+        }) {
+            ref.id = entries[index].harmonies[existing].id
+            entries[index].harmonies[existing] = ref
+        } else {
+            entries[index].harmonies.append(ref)
+        }
     }
 
     mutating func removeHarmony(at harmonyIndex: Int, fromEntry id: UUID) {

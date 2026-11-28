@@ -218,13 +218,13 @@ struct HarmonyTests {
         #expect(!state.isHarmony(state.voices[0].id))
     }
 
-    @Test func addingTheSameFileTwiceGivesDistinctIDs() throws {
+    @Test func addingTheSameFileTwiceReplacesIt() throws {
         let state = try stateWithMelody()
         let seconds = try Self.writeTune(named: "Seconds.bww")
         state.addHarmony(urls: [seconds])
         state.addHarmony(urls: [seconds])
-        #expect(state.voices.count == 3)
-        #expect(Set(state.voices.map(\.id)).count == 3)
+        #expect(state.voices.count == 2)
+        #expect(state.harmonyURLs.count == 1)
     }
 
     @Test func addHarmonyKeepsTempoAndMutes() throws {
@@ -571,4 +571,13 @@ struct SetHarmonyEditTests {
         #expect(state.harmonyNames(ofEntry: entry) == ["Second"])
         #expect(try SetList.load(from: state.currentURL!).entries[0].harmonies.count == 1)
     }
+
+    @Test func addingTheSameHarmonyTwiceInASetReplacesIt() throws {
+        let (state, entry) = try setWithTwoHarmonies()
+        let first = state.currentURL!.deletingLastPathComponent().appendingPathComponent("First.bww")
+        state.addHarmony(urls: [first], toEntry: entry)
+        #expect(state.harmonyNames(ofEntry: entry) == ["First", "Second"])
+        #expect(state.engine.segments[0].voices.count == 3)
+    }
 }
+

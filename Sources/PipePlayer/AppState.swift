@@ -150,7 +150,13 @@ final class AppState: ObservableObject {
                         tune: VoiceAligner.fit(voice.tune, to: melody)
                     )
                 }
-                harmonies.append((url, voices))
+                // The same file again replaces it (picks up any edits)
+                // rather than doubling it.
+                if let existing = harmonies.firstIndex(where: { $0.url.isSameFile(as: url) }) {
+                    harmonies[existing] = (url, voices)
+                } else {
+                    harmonies.append((url, voices))
+                }
                 added = true
             } catch {
                 errorMessage = error.localizedDescription
