@@ -26,6 +26,12 @@ echo "$releases" | grep -vqx 'https://github.com/brokosz/PipePlayer/releases/lat
 grep -q 'prefers-reduced-motion' style.css || fail "style.css doesn't handle prefers-reduced-motion"
 grep -q 'Outfit' style.css || fail "style.css doesn't use Outfit"
 grep -q 'macOS 13+' index.html || fail "index.html doesn't say macOS 13+"
+# The release build is arm64 only.
+grep -q 'Apple Silicon' index.html || fail "index.html doesn't say Apple Silicon"
+# Clips are normalized and trimmed; don't claim otherwise.
+grep -qi 'touched up' index.html && fail "index.html claims the clips are untouched"
+# The release ships no SoundFonts, so don't promise bundled pipe sounds.
+grep -qi 'bundled pipe' index.html && fail "index.html promises bundled pipe sounds the release doesn't ship"
 for ext in .bww .bmw .abc .musicxml .mxl; do
   grep -qF "$ext" index.html || fail "index.html doesn't mention $ext"
 done
