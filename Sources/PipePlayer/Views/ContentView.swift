@@ -13,10 +13,9 @@ struct ContentView: View {
     @StateObject private var appState: AppState
     @ObservedObject private var engine: PlaybackEngine
     @State private var isTargetedForDrop = false
-    /// Where a drag over a window with a tune open would land: the right
-    /// half adds the file as harmony, the left half opens it.
-    @State private var dropAddsHarmony = false
-    @State private var windowWidth: CGFloat = 0
+    /// Which zone a drag over the window is in (see `DropZone`).
+    @State private var dropZone: DropZone = .open
+    @State private var windowSize: CGSize = .zero
     // Per-window, saved and restored by SwiftUI alongside the window itself
     // — the same mechanism that already brings tabs back on relaunch.
     // Without it, every restored tab came back with a fresh, empty AppState.
@@ -84,14 +83,15 @@ struct ContentView: View {
         .background(WindowAccessor { appState.window = $0 })
         .background(GeometryReader { geo in
             Color.clear
-                .onAppear { windowWidth = geo.size.width }
-                .onChange(of: geo.size.width) { windowWidth = $0 }
+                .onAppear { windowSize = geo.size }
+                .onChange(of: geo.size) { windowSize = $0 }
         })
         .onDrop(of: [.fileURL], delegate: TuneDropDelegate(
             isTargeted: $isTargetedForDrop,
-            addsHarmony: $dropAddsHarmony,
-            canAddHarmony: canAddHarmony,
-            width: windowWidth,
+            zone: $dropZone,
+            hasZones: canAddHarmony,
+            isSet: appState.isSet,
+            size: windowSize,
             perform: handleDrop
         ))
         .onDisappear {
@@ -224,10 +224,18 @@ struct ContentView: View {
             if !canAddHarmony {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.accentColor, lineWidth: 3)
-            } else {
+            } else if appState.isSet {
                 HStack(spacing: 8) {
-                    dropHalf(appState.isSet ? "Add to Set" : "Open", systemImage: appState.isSet ? "text.badge.plus" : "doc", isActive: !dropAddsHarmony)
-                    dropHalf("Add as Harmony", systemImage: "plus.square.on.square", isActive: dropAddsHarmony)
+                    dropHalf("Add to Set", systemImage: "text.badge.plus", isActive: dropZone == .addToSet)
+                    dropHalf("Add as Harmony", systemImage: "plus.square.on.square", isActive: dropZone == .harmony)
+                }
+            } else {
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        dropHalf("Open", systemImage: "doc", isActive: dropZone == .open)
+                        dropHalf("Add as Harmony", systemImage: "plus.square.on.square", isActive: dropZone == .harmony)
+                    }
+                    dropHalf("Start a Set with Both", systemImage: "text.badge.plus", isActive: dropZone == .startSet)
                 }
             }
         }
@@ -322,18 +330,23 @@ struct ContentView: View {
         if savedMutes != mutes { savedMutes = mutes }
     }
 
-    private func handleDrop(_ providers: [NSItemProvider], asHarmony: Bool) -> Bool {
+    private func handleDrop(_ providers: [NSItemProvider], zone: DropZone) -> Bool {
         let fileProviders = providers.filter { $0.canLoadObject(ofClass: URL.self) }
         guard !fileProviders.isEmpty else { return false }
         for provider in fileProviders {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url else { return }
                 DispatchQueue.main.async {
-                    if asHarmony {
+                    let isSetFile = url.pathExtension.lowercased() == SetList.fileExtension
+                    switch zone {
+                    case .harmony where !isSetFile:
                         appState.addHarmony(urls: [url])
-                    } else if appState.isSet, url.pathExtension.lowercased() != SetList.fileExtension {
+                    case .startSet where !isSetFile:
+                        // Several files: the first starts the set, the rest join it.
+                        if appState.isSet { appState.addToSet(urls: [url]) } else { appState.makeSet(adding: [url]) }
+                    case .addToSet where !isSetFile:
                         appState.addToSet(urls: [url])
-                    } else {
+                    default:
                         openTune(url)
                     }
                 }
@@ -343,14 +356,31 @@ struct ContentView: View {
     }
 }
 
-/// Tracks which half of the window a drag is over, so a drop can either
-/// open the file or add it as harmony to the tune already open.
+/// Where a file dropped on the window goes. With a tune open: top left
+/// opens it, top right adds it as harmony, the bottom starts a set with both
+/// tunes. In a set: left adds it to the set, right adds it as harmony to the
+/// tune at the playhead. Kept off the view so it can be tested.
+enum DropZone: Equatable {
+    case open, harmony, startSet, addToSet
+
+    static func at(_ point: CGPoint, in size: CGSize, isSet: Bool) -> DropZone {
+        let right = point.x > size.width / 2
+        if isSet { return right ? .harmony : .addToSet }
+        if point.y > size.height / 2 { return .startSet }
+        return right ? .harmony : .open
+    }
+}
+
+/// Tracks which zone a drag is over (`DropZone`).
 private struct TuneDropDelegate: DropDelegate {
     @Binding var isTargeted: Bool
-    @Binding var addsHarmony: Bool
-    let canAddHarmony: Bool
-    let width: CGFloat
-    let perform: ([NSItemProvider], Bool) -> Bool
+    @Binding var zone: DropZone
+    /// False when there's nothing to add a harmony to: the whole window
+    /// then opens the file (or adds it to an empty set).
+    let hasZones: Bool
+    let isSet: Bool
+    let size: CGSize
+    let perform: ([NSItemProvider], DropZone) -> Bool
 
     func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.fileURL]) }
 
@@ -368,11 +398,12 @@ private struct TuneDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         isTargeted = false
-        return perform(info.itemProviders(for: [.fileURL]), canAddHarmony && addsHarmony)
+        update(info)
+        return perform(info.itemProviders(for: [.fileURL]), zone)
     }
 
     private func update(_ info: DropInfo) {
-        addsHarmony = canAddHarmony && info.location.x > width / 2
+        zone = hasZones ? DropZone.at(info.location, in: size, isSet: isSet) : (isSet ? .addToSet : .open)
     }
 }
 

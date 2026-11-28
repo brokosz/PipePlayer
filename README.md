@@ -56,6 +56,8 @@ Open a tune (**File → Open…** or drag it onto the window) and press play.
   the softer swing of the written rhythm
 - Each tune opens in its own tab. Opening a tune that's already open
   switches to its tab
+- Drop a second tune on the bottom of the window, or use **File → Make
+  Set**, to turn the open tune into a set
 - **File → New Set** makes a set list: tunes that play straight through,
   each once, the next coming in on the beat, for an MSR or a few jigs
   together. Add tunes with + or by dropping them, drag to reorder, and set

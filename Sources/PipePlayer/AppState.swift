@@ -257,6 +257,21 @@ final class AppState: ObservableObject {
         openSet(url: url, addToRecents: true)
     }
 
+    /// Turns this tune tab into an untitled set holding the tune — with its
+    /// harmonies and tempo — followed by `urls`. Nothing is saved until the
+    /// set is (⌘S).
+    func makeSet(adding urls: [URL] = []) {
+        guard !isSet, let tuneURL = currentURL else { return }
+        var set = SetList(name: "Untitled Set", entries: [])
+        set.append(tuneURL, relativeTo: nil)
+        set.entries[0].tempo = tempoOverride
+        for harmony in harmonyURLs {
+            set.addHarmony(harmony, toEntry: set.entries[0].id, relativeTo: nil)
+        }
+        for url in urls { set.append(url, relativeTo: nil) }
+        resetForSet(set, url: nil)
+    }
+
     /// Asks where to save this tune and its harmonies as a set.
     func chooseLocationAndSaveTuneAsSet() {
         guard let name = currentURL?.deletingPathExtension().lastPathComponent else { return }

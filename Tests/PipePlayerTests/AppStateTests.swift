@@ -594,3 +594,48 @@ struct SetHarmonyEditTests {
     }
 }
 
+
+@MainActor
+struct MakeSetTests {
+
+    @Test func makeSetKeepsTheTuneItsHarmoniesAndTempo() throws {
+        let a = try HarmonyTests.writeTune(named: "A.bww")
+        let seconds = a.deletingLastPathComponent().appendingPathComponent("Seconds.bww")
+        try FileManager.default.copyItem(at: a, to: seconds)
+        let state = AppState(recents: AppStateTests.scratchRecents())
+        state.open(url: a)
+        state.addHarmony(urls: [seconds])
+        state.engine.tempo = 70
+        state.makeSet()
+        #expect(state.isSet)
+        #expect(state.currentURL == nil)
+        #expect(state.setList?.entries.count == 1)
+        #expect(state.setList?.entries[0].tempo == 70)
+        #expect(state.setList?.entries[0].harmonies.count == 1)
+        #expect(state.engine.segments[0].voices.count == 2)
+    }
+
+    @Test func droppingOnTheBottomStartsASetWithBoth() throws {
+        let a = try HarmonyTests.writeTune(named: "A.bww")
+        let b = a.deletingLastPathComponent().appendingPathComponent("B.bww")
+        try FileManager.default.copyItem(at: a, to: b)
+        let state = AppState(recents: AppStateTests.scratchRecents())
+        state.open(url: a)
+        state.makeSet(adding: [b])
+        #expect(state.engine.segments.count == 2)
+    }
+
+    @Test func dropZonesInATuneTab() {
+        let size = CGSize(width: 400, height: 400)
+        #expect(DropZone.at(CGPoint(x: 50, y: 50), in: size, isSet: false) == .open)
+        #expect(DropZone.at(CGPoint(x: 350, y: 50), in: size, isSet: false) == .harmony)
+        #expect(DropZone.at(CGPoint(x: 350, y: 350), in: size, isSet: false) == .startSet)
+        #expect(DropZone.at(CGPoint(x: 50, y: 350), in: size, isSet: false) == .startSet)
+    }
+
+    @Test func dropZonesInASetTab() {
+        let size = CGSize(width: 400, height: 400)
+        #expect(DropZone.at(CGPoint(x: 50, y: 350), in: size, isSet: true) == .addToSet)
+        #expect(DropZone.at(CGPoint(x: 350, y: 350), in: size, isSet: true) == .harmony)
+    }
+}

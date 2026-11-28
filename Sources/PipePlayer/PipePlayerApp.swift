@@ -77,6 +77,11 @@ private struct AppMenuCommands: View {
         .keyboardShortcut("s", modifiers: .command)
         .disabled(appState?.isSet != true || appState?.currentURL != nil)
 
+        Button("Make Set") {
+            appState?.makeSet()
+        }
+        .disabled(appState?.tune == nil || appState?.isSet == true)
+
         Button("Save as Set…") {
             appState?.chooseLocationAndSaveTuneAsSet()
         }
