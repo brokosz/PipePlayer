@@ -40,8 +40,11 @@ struct ContentView: View {
     }
 
     var body: some View {
+        // Fixed pieces are pinned to their natural height (`natural()`), so
+        // the stack's minimum is exactly what it needs and the window can't
+        // clip them; the set list and the progress bar take any extra.
         VStack(spacing: 16) {
-            header
+            header.natural()
             Divider()
             if appState.isSet {
                 SetListView(appState: appState, engine: engine)
@@ -53,9 +56,7 @@ struct ContentView: View {
                         tuneTitles: appState.segmentTitles,
                         onSeek: { engine.seek(to: $0) }
                     )
-                    TransportControlsView(engine: engine)
-                } else {
-                    Spacer()
+                    TransportControlsView(engine: engine).natural()
                 }
             } else if appState.tune != nil {
                 PartProgressView(
@@ -70,18 +71,15 @@ struct ContentView: View {
                         isHarmony: { appState.isHarmony($0) },
                         onRemoveHarmony: { appState.removeHarmony(voiceID: $0) }
                     )
+                    .natural()
                 }
-                TransportControlsView(engine: engine)
+                TransportControlsView(engine: engine).natural()
+                Spacer(minLength: 0)
             } else {
                 emptyState
             }
         }
         .padding()
-        // The window's minimum height is whatever the content needs; it can
-        // still grow taller. A fixed minimum let the window get shorter than
-        // its content (more so with the tab bar showing, or a set list), and
-        // SwiftUI then clipped both the heading and the bottom controls.
-        .fixedSize(horizontal: false, vertical: true)
         .frame(minWidth: 480, minHeight: 460, maxHeight: .infinity, alignment: .top)
         .navigationTitle(windowTitle)
         .background(dropHighlightOverlay)
@@ -396,3 +394,14 @@ private struct WindowAccessor: NSViewRepresentable {
         }
     }
 }
+
+private extension View {
+    /// Never shorter or taller than the view's natural height. The window's
+    /// minimum size is the sum of its pieces' minimums; without this some
+    /// controls reported less than they draw, and a short window (or the
+    /// tab bar appearing) clipped the heading and bottom controls.
+    func natural() -> some View {
+        fixedSize(horizontal: false, vertical: true)
+    }
+}
+

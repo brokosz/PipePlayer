@@ -39,10 +39,11 @@ struct PartProgressView: View {
                             segment(for: part, at: position, width: width(part))
                         }
                     }
-                    .frame(height: 32)
+                    .frame(maxHeight: .infinity)
                 }
             }
-            .frame(height: tuneTitles.isEmpty ? 32 : 52)
+            // Taller with the window, up to a point.
+            .frame(minHeight: tuneTitles.isEmpty ? 32 : 52, maxHeight: tuneTitles.isEmpty ? 72 : 92)
 
             HStack(spacing: 4) {
                 if let active = activePosition, active == loopedPartIndex {
@@ -53,7 +54,7 @@ struct PartProgressView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, alignment: .top)
     }
 
     /// Position in `timeline` of the part at the playhead.

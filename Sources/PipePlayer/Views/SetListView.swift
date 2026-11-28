@@ -23,7 +23,8 @@ struct SetListView: View {
                 .onMove { appState.moveSetEntries(from: $0, to: $1) }
             }
             .listStyle(.bordered(alternatesRowBackgrounds: true))
-            .frame(height: min(max(CGFloat(entries.count), 2) * 24 + 8, 168))
+            // At least a few rows; grows with the window.
+            .frame(minHeight: min(max(CGFloat(entries.count), 2) * 24 + 8, 128), maxHeight: .infinity)
             .overlay {
                 if entries.isEmpty {
                     Text("Add tunes with + or drop them here")
