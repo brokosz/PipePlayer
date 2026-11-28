@@ -56,6 +56,9 @@ struct ContentView: View {
                         tuneTitles: appState.segmentTitles,
                         onSeek: { engine.seek(to: $0) }
                     )
+                    if engine.currentVoices.count > 1 {
+                        voiceRow
+                    }
                     TransportControlsView(engine: engine).natural()
                 }
             } else if appState.tune != nil {
@@ -65,13 +68,8 @@ struct ContentView: View {
                     loopedPartIndex: engine.loopedPartIndex,
                     onSeek: { engine.seek(to: $0) }
                 )
-                if engine.voices.count > 1 {
-                    VoiceMuteControlsView(
-                        engine: engine,
-                        isHarmony: { appState.isHarmony($0) },
-                        onRemoveHarmony: { appState.removeHarmony(voiceID: $0) }
-                    )
-                    .natural()
+                if engine.currentVoices.count > 1 {
+                    voiceRow
                 }
                 TransportControlsView(engine: engine).natural()
                 Spacer(minLength: 0)
@@ -92,7 +90,7 @@ struct ContentView: View {
         .onDrop(of: [.fileURL], delegate: TuneDropDelegate(
             isTargeted: $isTargetedForDrop,
             addsHarmony: $dropAddsHarmony,
-            canAddHarmony: appState.tune != nil && !appState.isSet,
+            canAddHarmony: canAddHarmony,
             width: windowWidth,
             perform: handleDrop
         ))
@@ -213,15 +211,29 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, minHeight: 360)
     }
 
+    private var voiceRow: some View {
+        VoiceMuteControlsView(
+            engine: engine,
+            isHarmony: { appState.isHarmony($0) },
+            onRemoveHarmony: { appState.removeHarmony(voiceID: $0) }
+        )
+        .natural()
+    }
+
+    /// A tune is open, or a set with a tune to attach the harmony to.
+    private var canAddHarmony: Bool {
+        appState.tune != nil || (appState.isSet && !engine.segments.isEmpty)
+    }
+
     @ViewBuilder
     private var dropHighlightOverlay: some View {
         if isTargetedForDrop {
-            if appState.tune == nil {
+            if !canAddHarmony {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.accentColor, lineWidth: 3)
             } else {
                 HStack(spacing: 8) {
-                    dropHalf("Open", systemImage: "doc", isActive: !dropAddsHarmony)
+                    dropHalf(appState.isSet ? "Add to Set" : "Open", systemImage: appState.isSet ? "text.badge.plus" : "doc", isActive: !dropAddsHarmony)
                     dropHalf("Add as Harmony", systemImage: "plus.square.on.square", isActive: dropAddsHarmony)
                 }
             }
@@ -324,10 +336,10 @@ struct ContentView: View {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url else { return }
                 DispatchQueue.main.async {
-                    if appState.isSet, url.pathExtension.lowercased() != SetList.fileExtension {
-                        appState.addToSet(urls: [url])
-                    } else if asHarmony {
+                    if asHarmony {
                         appState.addHarmony(urls: [url])
+                    } else if appState.isSet, url.pathExtension.lowercased() != SetList.fileExtension {
+                        appState.addToSet(urls: [url])
                     } else {
                         openTune(url)
                     }

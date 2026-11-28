@@ -19,6 +19,11 @@ struct SetListView: View {
                         // Every click jumps, even on the row already
                         // selected; selection itself only picks what − removes.
                         .simultaneousGesture(TapGesture().onEnded { jump(to: entry.id) })
+                        .contextMenu {
+                            Button("Add Harmony…") {
+                                appState.addHarmony(urls: AppState.chooseSetTuneFiles(), toEntry: entry.id)
+                            }
+                        }
                 }
                 .onMove { appState.moveSetEntries(from: $0, to: $1) }
             }
@@ -76,6 +81,9 @@ struct SetListView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(title(of: entry, segment: segment))
                     .fontWeight(isPlaying ? .semibold : .regular)
+                ForEach(appState.harmonyNames(ofEntry: entry.id), id: \.self) { name in
+                    Text("+ \(name)").font(.caption).foregroundStyle(.secondary)
+                }
                 if let problem {
                     Text(problem).font(.caption).foregroundStyle(.secondary)
                 }

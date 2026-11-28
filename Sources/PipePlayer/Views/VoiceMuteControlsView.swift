@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// One mute checkbox per simultaneous voice. Only meaningful — and only
-/// shown by `ContentView` — when a tune has more than one voice, i.e. a
-/// MusicXML harmony arrangement with bridged staves (melody + harmony parts)
-/// meant to play together. ABC/BWW/BMW and single-part MusicXML always
-/// produce exactly one voice, so this view never appears for those.
+/// One mute checkbox per voice of the tune at the playhead — a MusicXML
+/// arrangement's parts, or harmony files added to the tune. Shown by
+/// `ContentView` only when there's more than one. Added harmonies also get
+/// a remove button.
 struct VoiceMuteControlsView: View {
     @ObservedObject var engine: PlaybackEngine
     /// Added harmony voices get a Remove Harmony item on right-click.
@@ -17,12 +16,24 @@ struct VoiceMuteControlsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: 16) {
-                ForEach(engine.voices) { voice in
-                    Toggle(voice.name, isOn: Binding(
-                        get: { !engine.mutedVoiceIDs.contains(voice.id) },
-                        set: { engine.setVoiceMuted(id: voice.id, muted: !$0) }
-                    ))
-                    .toggleStyle(.checkbox)
+                ForEach(engine.currentVoices) { voice in
+                    HStack(spacing: 4) {
+                        Toggle(voice.name, isOn: Binding(
+                            get: { !engine.mutedVoiceIDs.contains(voice.id) },
+                            set: { engine.setVoiceMuted(id: voice.id, muted: !$0) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        if isHarmony(voice.id) {
+                            Button {
+                                onRemoveHarmony(voice.id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Remove Harmony")
+                        }
+                    }
                     .contextMenu {
                         if isHarmony(voice.id) {
                             Button("Remove Harmony") { onRemoveHarmony(voice.id) }

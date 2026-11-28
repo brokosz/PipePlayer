@@ -62,13 +62,18 @@ private struct AppMenuCommands: View {
             appState.addHarmony(urls: AppState.chooseTuneFiles())
         }
         .keyboardShortcut("o", modifiers: [.command, .option])
-        .disabled(appState?.tune == nil || appState?.isSet == true)
+        .disabled(appState.map { $0.tune == nil && !($0.isSet && !$0.engine.segments.isEmpty) } ?? true)
 
         Button("Save Set…") {
             appState?.chooseLocationAndSaveSet()
         }
         .keyboardShortcut("s", modifiers: .command)
         .disabled(appState?.isSet != true || appState?.currentURL != nil)
+
+        Button("Save as Set…") {
+            appState?.chooseLocationAndSaveTuneAsSet()
+        }
+        .disabled(appState?.tune == nil || appState?.isSet == true)
 
         Menu("Open Recent") {
             if recents.urls.isEmpty {

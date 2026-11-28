@@ -61,6 +61,10 @@ Open a tune (**File → Open…** or drag it onto the window) and press play.
   together. Add tunes with + or by dropping them, drag to reorder, and set
   each tune's tempo while it plays. Save it as a `.pipeset` next to your
   tunes; changes save as you go
+- Tunes in a set can have harmonies too: right-click a tune in the list for
+  **Add Harmony…**, or drop a file on the right half of the window. To keep
+  a tune and its seconds together, use **File → Save as Set…** on the tune
+- Each added harmony has a mute checkbox and an × to remove it
 - To play seconds or another harmony along with a tune, drop its file on
   the right half of the window (**Add as Harmony**), or use **File → Add
   Harmony…**. It follows the tune's tempo and repeats, and gets its own mute
