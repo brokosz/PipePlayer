@@ -7,6 +7,9 @@ import SwiftUI
 /// produce exactly one voice, so this view never appears for those.
 struct VoiceMuteControlsView: View {
     @ObservedObject var engine: PlaybackEngine
+    /// Added harmony voices get a Remove Harmony item on right-click.
+    var isHarmony: (String) -> Bool = { _ in false }
+    var onRemoveHarmony: (String) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -20,6 +23,11 @@ struct VoiceMuteControlsView: View {
                         set: { engine.setVoiceMuted(id: voice.id, muted: !$0) }
                     ))
                     .toggleStyle(.checkbox)
+                    .contextMenu {
+                        if isHarmony(voice.id) {
+                            Button("Remove Harmony") { onRemoveHarmony(voice.id) }
+                        }
+                    }
                 }
                 Spacer()
             }

@@ -13,6 +13,10 @@ struct ContentView: View {
     @StateObject private var appState: AppState
     @ObservedObject private var engine: PlaybackEngine
     @State private var isTargetedForDrop = false
+    /// Where a drag over a window with a tune open would land: the right
+    /// half adds the file as harmony, the left half opens it.
+    @State private var dropAddsHarmony = false
+    @State private var windowWidth: CGFloat = 0
     // Per-window, saved and restored by SwiftUI alongside the window itself
     // — the same mechanism that already brings tabs back on relaunch.
     // Without it, every restored tab came back with a fresh, empty AppState.
@@ -23,6 +27,8 @@ struct ContentView: View {
     // SceneStorage only takes plain scalar types.
     @SceneStorage("PipePlayer.tempoOverride") private var savedTempo: Double = 0
     @SceneStorage("PipePlayer.mutedVoices") private var savedMutes: String = ""
+    // Bookmarks of files added as harmony, as a property-list [Data].
+    @SceneStorage("PipePlayer.harmonyBookmarks") private var savedHarmonies: Data = Data()
     @Environment(\.openWindow) private var openWindow
 
     init() {
@@ -44,7 +50,11 @@ struct ContentView: View {
                     onSeek: { engine.seek(to: $0) }
                 )
                 if engine.voices.count > 1 {
-                    VoiceMuteControlsView(engine: engine)
+                    VoiceMuteControlsView(
+                        engine: engine,
+                        isHarmony: { appState.isHarmony($0) },
+                        onRemoveHarmony: { appState.removeHarmony(voiceID: $0) }
+                    )
                 }
                 TransportControlsView(engine: engine)
             } else {
@@ -56,9 +66,18 @@ struct ContentView: View {
         .navigationTitle(windowTitle)
         .background(dropHighlightOverlay)
         .background(WindowAccessor { appState.window = $0 })
-        .onDrop(of: [.fileURL], isTargeted: $isTargetedForDrop) { providers in
-            handleDrop(providers)
-        }
+        .background(GeometryReader { geo in
+            Color.clear
+                .onAppear { windowWidth = geo.size.width }
+                .onChange(of: geo.size.width) { windowWidth = $0 }
+        })
+        .onDrop(of: [.fileURL], delegate: TuneDropDelegate(
+            isTargeted: $isTargetedForDrop,
+            addsHarmony: $dropAddsHarmony,
+            canAddHarmony: appState.tune != nil,
+            width: windowWidth,
+            perform: handleDrop
+        ))
         .onDisappear {
             // Closing the window (the red button) tears down this view
             // without quitting the app — playback should stop right along
@@ -91,6 +110,10 @@ struct ContentView: View {
         }
         .onChange(of: engine.tempo) { _ in savePlaybackSettings() }
         .onChange(of: engine.mutedVoiceIDs) { _ in savePlaybackSettings() }
+        .onChange(of: appState.harmonyURLs) { urls in
+            let bookmarks = urls.compactMap { try? $0.bookmarkData() }
+            savedHarmonies = (try? PropertyListEncoder().encode(bookmarks)) ?? Data()
+        }
         .onOpenURL { url in
             // Finder's "Open With"/double-click and the custom document-type
             // registrations in package_app.sh's Info.plist deliver the file
@@ -153,9 +176,30 @@ struct ContentView: View {
     @ViewBuilder
     private var dropHighlightOverlay: some View {
         if isTargetedForDrop {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.accentColor, lineWidth: 3)
+            if appState.tune == nil {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.accentColor, lineWidth: 3)
+            } else {
+                HStack(spacing: 8) {
+                    dropHalf("Open", systemImage: "doc", isActive: !dropAddsHarmony)
+                    dropHalf("Add as Harmony", systemImage: "plus.square.on.square", isActive: dropAddsHarmony)
+                }
+            }
         }
+    }
+
+    private func dropHalf(_ title: String, systemImage: String, isActive: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color.accentColor.opacity(isActive ? 0.15 : 0.04))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.accentColor.opacity(isActive ? 1 : 0.35), lineWidth: isActive ? 3 : 1.5)
+            )
+            .overlay(
+                Label(title, systemImage: systemImage)
+                    .font(.headline)
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+            )
     }
 
     private func openTune(_ url: URL) {
@@ -194,7 +238,19 @@ struct ContentView: View {
             return
         }
         appState.open(url: url, addToRecents: false)
+        restoreHarmonies()
         applySavedPlaybackSettings()
+    }
+
+    /// Re-adds the tab's harmony files; ones that no longer resolve are
+    /// skipped quietly, like a missing tune.
+    private func restoreHarmonies() {
+        guard let bookmarks = try? PropertyListDecoder().decode([Data].self, from: savedHarmonies) else { return }
+        let urls = bookmarks.compactMap { data -> URL? in
+            var isStale = false
+            return try? URL(resolvingBookmarkData: data, bookmarkDataIsStale: &isStale)
+        }
+        if !urls.isEmpty { appState.addHarmony(urls: urls) }
     }
 
     private func applySavedPlaybackSettings() {
@@ -212,19 +268,54 @@ struct ContentView: View {
         if savedMutes != mutes { savedMutes = mutes }
     }
 
-    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+    private func handleDrop(_ providers: [NSItemProvider], asHarmony: Bool) -> Bool {
         let fileProviders = providers.filter { $0.canLoadObject(ofClass: URL.self) }
         guard !fileProviders.isEmpty else { return false }
         for provider in fileProviders {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                if let url {
-                    DispatchQueue.main.async { openTune(url) }
+                guard let url else { return }
+                DispatchQueue.main.async {
+                    if asHarmony { appState.addHarmony(urls: [url]) } else { openTune(url) }
                 }
             }
         }
         return true
     }
 }
+
+/// Tracks which half of the window a drag is over, so a drop can either
+/// open the file or add it as harmony to the tune already open.
+private struct TuneDropDelegate: DropDelegate {
+    @Binding var isTargeted: Bool
+    @Binding var addsHarmony: Bool
+    let canAddHarmony: Bool
+    let width: CGFloat
+    let perform: ([NSItemProvider], Bool) -> Bool
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.fileURL]) }
+
+    func dropEntered(info: DropInfo) {
+        isTargeted = true
+        update(info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        update(info)
+        return DropProposal(operation: .copy)
+    }
+
+    func dropExited(info: DropInfo) { isTargeted = false }
+
+    func performDrop(info: DropInfo) -> Bool {
+        isTargeted = false
+        return perform(info.itemProviders(for: [.fileURL]), canAddHarmony && addsHarmony)
+    }
+
+    private func update(_ info: DropInfo) {
+        addsHarmony = canAddHarmony && info.location.x > width / 2
+    }
+}
+
 
 /// Hands back the `NSWindow` hosting a SwiftUI view — SwiftUI has no
 /// public way to reach it, and `TuneOpener` needs it to bring an

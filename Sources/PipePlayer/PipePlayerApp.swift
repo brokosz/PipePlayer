@@ -47,6 +47,13 @@ private struct AppMenuCommands: View {
         }
         .keyboardShortcut("o", modifiers: .command)
 
+        Button("Add Harmony…") {
+            guard let appState else { return }
+            appState.addHarmony(urls: AppState.chooseTuneFiles())
+        }
+        .keyboardShortcut("o", modifiers: [.command, .option])
+        .disabled(appState?.tune == nil)
+
         Menu("Open Recent") {
             if recents.urls.isEmpty {
                 Button("No Recent Files") {}

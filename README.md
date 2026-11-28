@@ -56,7 +56,12 @@ Open a tune (**File → Open…** or drag it onto the window) and press play.
   the softer swing of the written rhythm
 - Each tune opens in its own tab. Open or drop several at once to queue up
   a set. Opening a tune that's already open switches to its tab
-- Tabs come back after you quit, with the same tempo and muted voices
+- To play seconds or another harmony along with a tune, drop its file on
+  the right half of the window (**Add as Harmony**), or use **File → Add
+  Harmony…**. It follows the tune's tempo and repeats, and gets its own mute
+  checkbox. Right-click that checkbox to remove it
+- Tabs come back after you quit, with the same tempo, muted voices and
+  added harmonies
 - The export button (⬆) saves what you're hearing as an audio file
 
 ## Privacy
